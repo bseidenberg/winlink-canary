@@ -28,11 +28,13 @@
 #    uses to run the nodes. The author has fixed the crash in the latest beta release, but the session still dies.
 #    This appears to be triggered if there is a pending email in CMS for download, and you connect with Pat to our 
 #    LinPBQ nodes via VARA in "Send-Only" mode. It seems to not matter whether or not there's actually a message to send
-#    in the outbox or not.
-#  * The overall flow and logic for health checking needs to be rewritten. Right now, we don't have the ability to 
-#    detect and record errors on send, which seem to be far more problematic than messages vanishing between send
-#    and recieve (which the original logic was written to detect). We should wrap each node in a seperate send/recieve
-#    cycle, rather than sending all, then recieving all. 
+#    in the outbox or not. Since finding the bug, the program flow was rewritten in a way that does not trigger this 
+#    issue.
+#  * Logging needs to be cleaned up - and we need to figure out how to handle our output, pat's output, etc.
+#  * It's currently way too aggressive. It sends a message, sleeps 30 seconds, then downloads it from the internet, 
+#    then immediately moves to the next channel. The message send time is ~60s, so it's on-air ~66% of the time (and 
+#    more TX than RX). This will hog the channels. We need to put in way more sleep.
+#  * I want to print the history state after each pass.
 #  * There is currently no notification mechanism for failures. This will get written once the rest of everything is
 #    working.
 
@@ -42,7 +44,7 @@ import time
 import logging
 import os
 from collections import namedtuple, deque
-from subprocess import run
+from subprocess import run, CalledProcessError
 import Hamlib
 
 Node = namedtuple("Node", ["name", "frequency", "peer"])
@@ -50,19 +52,22 @@ Probe = namedtuple("Probe", ["id", "timestamp"])
 
 # ----- CONFIGURATION HERE -------
 NODES = [
-    ## NOTE: Currently disabling all but Magnolia as we've found a pattern that crashes the nodes! 
-    #        Magnolia is patched, the rest aren't
-    # FIXME: Patch/Uncomment
-    #Node("Beacon Hill #1", 430.800, "W7ACS-10"),
-    #Node("Beacon Hill #2", 439.800, "W7ACS-10"),
-    #Node("Capitol Hill #1", 430.950, "W7ACS-10"),
-    #Node("Capitol Hill #2", 439.950, "W7ACS-10"),
+    Node("Beacon Hill #1", 430.800, "W7ACS-10"),
+    Node("Beacon Hill #2", 439.800, "W7ACS-10"),
+    Node("Capitol Hill #1", 430.950, "W7ACS-10"),
+    Node("Capitol Hill #2", 439.950, "W7ACS-10"),
     Node("Magnolia", 430.875, "W7ACS-10"),
-    #Node("Northwest", 431.000, "W7ACS-10")
+    Node("Northwest", 431.000, "W7ACS-10")
 ]
 
 # Time to wait before trying to fetch the probes
 FETCH_SLEEP = 2
+
+# Time to wait (seconds) between sending a probe and checking for it. There's then exponential backoff for the retries.
+FETCH_RETRY_INTERVAL = 30
+
+# Number of times to retry looking for a probe. (There's exponential backoff between them - see interval, above)
+FETCH_RETRIES_COUNT = 3
 
 # How many runs we look back at for determining health
 WINDOW_SIZE = 5
@@ -82,10 +87,11 @@ MAILBOX_BASE = f"/home/astronut/.local/share/pat/mailbox/{CALLSIGN}"
 # Path to the pat binary
 PAT = '/usr/bin/pat'
 
-# Instantiate Hamlib. This is effectively config as it's tunable.
-# We do not use rigctld because we want to open/close the serial port to allow VARA to share it
-# and VARA does not support rigctld 
-
+# Instantiate Hamlib. This is effectively config as it's tunable so we do it here instead of setup.
+# Note that we do not use rigctld because we want to open/close the serial port to allow VARA to share it and VARA does
+# not support rigctld 
+# Disable the very, very verbose logging that hamlib does by default
+Hamlib.rig_set_debug(Hamlib.RIG_DEBUG_NONE)
 # Rig Model
 RIG = Hamlib.Rig(rig_model=Hamlib.RIG_MODEL_IC705)
 
@@ -102,11 +108,10 @@ HEALTH_STATE = {}
 def setup():
     # FIXME
     logging.basicConfig(level=logging.DEBUG)
-
-
     
     # Check VARA's health
-    pass
+    pass # TODO
+
     # Initiate PROBE_HISTORY and HEALTH_STATE
     for node in NODES:
         PROBE_HISTORY[node] = deque(maxlen=WINDOW_SIZE)
@@ -117,77 +122,88 @@ def setup():
 This is the main logic loop for the canary. We invoke this from inside a loop - each invocation is a step.
 
 Each step does the following:
-* Composes and sends a probe to each node we're monitoring. The probe has a subject with a tracked UUID.
-* Sleeps for FETCH_SLEEP minutes
-* Connects to the Winlink system over the internet via Telnet and fetches all pending probes
-* Adds an entry to each node's health buffer for either healthy or unhealthy 
-
+* For each node, sends a probe over RF then polls over the internet to ensure it's recieved.
+* Adds an entry to each node's health buffer for either healthy or unhealthy
+* Checks the state of the buffer to calculate whether a node is HEALTHY, UNHEALTHY or PENDING (insufficient data)
+* Determines which nodes changed states in this pass, and reports the change
 '''
 def run_loop_step():
-    pending_probes = {}
-
-    # Send a probe to each node
-    # TODO - Shuffle
+    # Check the health of each node, and append it to the node's circular buffer of health status
     for node in NODES:
-        pending_probes[node] = send_probe(node)
-
-    # Sleep for N minutes
-    print(f"PLACEHOLDER: Would sleep {FETCH_SLEEP} minutes")
-    time.sleep(60 * FETCH_SLEEP)
-
-    # Fetch all of the recieved probes
-    rxd_probe_ids = fetch_all()
-    print("DEBUG: Recieved ids: " + ', '.join(rxd_probe_ids))
-
-    # Do the health check logic.
-    for node in NODES:
-        # Handle the current probe for the node
-        probe = pending_probes[node]
-        if probe.id in rxd_probe_ids:
-            logging.info(f"Successfully retrieved probe {probe.id} which was sent to {node.name} at {probe.timestamp}")
-            rxd_probe_ids.discard(probe.id)
+        success = check_health(node)
+        if success:
             PROBE_HISTORY[node].append(0)
         else:
-            logging.warning(f"Failed to retrieve probe {probe.id} which was sent to {node.name} at {probe.timestamp}")
             PROBE_HISTORY[node].append(1)
     
     # Calculate the new health state
-    global HEALTH_STATE
     new_health_state = calculate_health_state(PROBE_HISTORY)
 
     # Handle the diff (Including reporting)
+    global HEALTH_STATE
     diff_and_report_health_state(HEALTH_STATE, new_health_state)
 
     # Save the state
     HEALTH_STATE = new_health_state
 
-    # Remove 
+    # Clean up
     clear_inbox()
+
+'''
+Checks the health of a node. Returns True for healthy, False for unhealthy
+'''
+def check_health(node):
+    assert_outbox_empty()
+    try: 
+        pending_probe = send_probe(node)
+        assert_outbox_empty
+    except (RuntimeError, CalledProcessError):
+        logging.error(f"Failed to transmit probe to node {node.name}!")
+        # Cleanup non-empty outbox
+        clear_outbox()
+        return False
+
+    return poll_for_probe(pending_probe)
     
 
 def send_probe(node):
     probe = Probe(str(uuid.uuid4()), time.time())
-    # Assert the outbox is empty
-    if len(os.listdir(MAILBOX_BASE + "/out")) > 0:
-        raise RuntimeError("Outbox is non-empty - We don't handle this yet")
     
     logging.info(f"Composing {probe.id} to {node.name} at {probe.timestamp}")
     body = f"Canary message sent to {node.name} on {node.frequency} at {probe.timestamp}".encode()
     run([PAT, 'compose', '-s', probe.id, CALLSIGN, '-r', SENDER], input=body).check_returncode()
     logging.info(f"Composed. Changing frequency to {node.frequency}..")
-    # Change frequency - we open and close to avoid fighting with VARA on the serial port
+    # Change frequency - we open and close the RIG handle to avoid fighting with VARA on the serial port
     RIG.open()
     RIG.set_freq(Hamlib.RIG_VFO_CURR, int(node.frequency * 1e6))
     RIG.close()
-    run([PAT, '-s', 'connect', f'vara:///{node.peer}'])
+    run([PAT, '-s', 'connect', f'vara:///{node.peer}']).check_returncode()
 
     logging.info(f"Sent!")
 
-    # FIXME REMOVE
-    time.sleep(1)
-
     return probe
 
+def poll_for_probe(probe):
+    sleep_int = FETCH_RETRY_INTERVAL
+    for i in range(FETCH_RETRIES_COUNT):
+        logging.info(f"Try {i+1} to fetch probe {probe.id}. Will sleep {sleep_int} seconds first...")
+        # Sleep first to give the remote system time to handle the sent mail
+        time.sleep(sleep_int)
+
+        # Fetch pending mail
+        rxd_probe_ids = fetch_all()
+
+        # Check for our probe
+        if probe.id in rxd_probe_ids:
+            logging.info("Probe found!")
+            return True
+        
+        # Exponential Backoff
+        logging.info("Probe not found, sleeping...")
+        sleep_int = 2*sleep_int
+    
+    logging.info(f"Giving up on probe {probe.id}")
+    return False
 
 def fetch_all():
     download_mail_via_telnet()
@@ -226,8 +242,20 @@ def diff_and_report_health_state(old, new):
             
 
 def clear_inbox():
-    run(f'rm {MAILBOX_BASE}/in/*', shell=True).check_returncode()
+    # No .check_returncode because we may not have any (on failure)
+    run(f'rm {MAILBOX_BASE}/in/*', shell=True)
 
+def clear_outbox():
+    run(f'rm {MAILBOX_BASE}/out/*', shell=True).check_returncode()
+
+def assert_outbox_empty():
+    # Assert the outbox is empty
+    if len(os.listdir(MAILBOX_BASE + "/out")) > 0:
+        raise RuntimeError("Outbox is non-empty - We don't handle this yet")
+    
+
+
+# MAIN
 
 if __name__ == "__main__":
     setup()
