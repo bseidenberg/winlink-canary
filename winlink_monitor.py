@@ -34,7 +34,6 @@
 #  * It's currently way too aggressive. It sends a message, sleeps 30 seconds, then downloads it from the internet, 
 #    then immediately moves to the next channel. The message send time is ~60s, so it's on-air ~66% of the time (and 
 #    more TX than RX). This will hog the channels. We need to put in way more sleep.
-#  * I want to print the history state after each pass.
 #  * There is currently no notification mechanism for failures. This will get written once the rest of everything is
 #    working.
 
@@ -137,7 +136,7 @@ def run_loop_step():
             PROBE_HISTORY[node].append(1)
     
     # Calculate the new health state
-    new_health_state = calculate_health_state(PROBE_HISTORY)
+    new_health_state = calculate_health_state()
 
     # Handle the diff (Including reporting)
     global HEALTH_STATE
@@ -220,9 +219,10 @@ def find_all_ids():
     return set(map(str.strip, output.decode('utf-8').splitlines()))
 
 
-def calculate_health_state(probe_history):
+def calculate_health_state():
     state = {}
-    for (node, history) in probe_history.items():
+    for (node, history) in PROBE_HISTORY.items():
+        logging.info(f"Probe History for {node.name}\t{history_string(history)}")
         if len(history) < WINDOW_SIZE:
             state[node] = 'PENDING'
             continue
@@ -232,6 +232,16 @@ def calculate_health_state(probe_history):
         else:
             state[node] = 'HEALTHY'
     return state
+
+def history_string(history):
+    ret = ""
+    for item in history:
+        if item == 0:
+            ret += "+"
+        else:
+            ret += "-"
+    return ret
+
 
 
 def diff_and_report_health_state(old, new):
