@@ -80,9 +80,7 @@ sudo dpkg --add-architecture i386 && sudo apt update && sudo apt install wine32 
 
 # Set up the wine install. If you already have one, you probably want to add an export WINEPREFIX=<some other path> to set up a dedicated install
 export WINEARCH=win32
-winetricks winxp
-winetricks sound=alsa
-winetricks vb6run 
+winetricks -q win7 vb6run pdh_nt4 sound=alsa
 ```
 
 (Note that some instructions you'll find tell you to run the winetricks dotnet35sp1 and vcrun2015. These appear to be needed for RMS Express but are not needed for VARA FM by itself.)
@@ -90,13 +88,6 @@ winetricks vb6run
 Download the VARA setup from https://rosmodem.wordpress.com/. Put the setup zip in your homedir (or adjust instructions accordingly
 
 Unzip: `unzip VARA\ FM\ v4.1.4\ Setup.zip`
-
-We appear to need to replace pdh.dll. This seems to be common. You can get a compatible version from K6ETA or OE7DRT's websites.
-```
-wget https://oe7drt.com/blog/2021-10-03-winlink-and-vara-on-linux/pdh.dll.zip
-unzip pdh.dll.zip
-mv pdh.dll .wine/drive_c/windows/system32/pdh.dll
-```
 
 Now we're ready to install VARA:
 
