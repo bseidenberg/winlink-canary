@@ -45,18 +45,21 @@ import os
 from collections import namedtuple, deque
 from subprocess import run, CalledProcessError
 import Hamlib
+from tait import Tait
 
-Node = namedtuple("Node", ["name", "frequency", "peer"])
+Node = namedtuple("Node", ["name", "frequency", "peer", "channel"])
 Probe = namedtuple("Probe", ["id", "timestamp"])
 
 # ----- CONFIGURATION HERE -------
-NODES = [
-    Node("Beacon Hill #1", 430.800, "W7ACS-10"),
-    Node("Beacon Hill #2", 439.800, "W7ACS-10"),
-    Node("Capitol Hill #1", 430.950, "W7ACS-10"),
-    Node("Capitol Hill #2", 439.950, "W7ACS-10"),
-    Node("Magnolia", 430.875, "W7ACS-10"),
-    Node("Northwest", 431.000, "W7ACS-10")
+# TEMP: VHF local nodes. ACS doesn't run any, but my test radio is VHF only right now.
+NODES = [   
+    Node("KD7DK-10", 144.900, "KD7DK-10", 1),
+    Node("W7MIR-10", 145.030, "W7MIR-10", 2),
+    Node("KM6SO-10", 145.530, "KM6SO-10", 3),
+    Node("K7NHV-10", 145.045, "K7NHV-10", 4),
+    Node("W7VMI-10", 145.070, "W7VMI-10", 5),
+    Node("KF7ZYF-12", 145.560, "KF7ZYF-12", 6),
+    Node("W7PFB-10", 144.990, "W7PFB-10", 7)
 ]
 
 # Time to wait before trying to fetch the probes
@@ -86,16 +89,9 @@ MAILBOX_BASE = f"/home/astronut/.local/share/pat/mailbox/{CALLSIGN}"
 # Path to the pat binary
 PAT = '/usr/bin/pat'
 
-# Instantiate Hamlib. This is effectively config as it's tunable so we do it here instead of setup.
-# Note that we do not use rigctld because we want to open/close the serial port to allow VARA to share it and VARA does
-# not support rigctld 
-# Disable the very, very verbose logging that hamlib does by default
-Hamlib.rig_set_debug(Hamlib.RIG_DEBUG_NONE)
-# Rig Model
-RIG = Hamlib.Rig(rig_model=Hamlib.RIG_MODEL_IC705)
-
-# Serial port
-RIG.set_conf("rig_pathname", "/dev/ttyACM0")
+# Set Up the Tait
+# TODO: UDev Rule
+TAIT = Tait("/dev/ttyUSB0", 9600)
 
 
 # ------ END CONFIGURATION -------
@@ -172,10 +168,8 @@ def send_probe(node):
     body = f"Canary message sent to {node.name} on {node.frequency} at {probe.timestamp}".encode()
     run([PAT, 'compose', '-s', probe.id, CALLSIGN, '-r', SENDER], input=body).check_returncode()
     logging.info(f"Composed. Changing frequency to {node.frequency}..")
-    # Change frequency - we open and close the RIG handle to avoid fighting with VARA on the serial port
-    RIG.open()
-    RIG.set_freq(Hamlib.RIG_VFO_CURR, int(node.frequency * 1e6))
-    RIG.close()
+    # Change frequency
+    TAIT.set_channel(node.channel)
     run([PAT, '-s', 'connect', f'vara:///{node.peer}']).check_returncode()
 
     logging.info(f"Sent!")
