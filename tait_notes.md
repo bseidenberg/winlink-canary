@@ -12,7 +12,12 @@ For my purposes, I was able to use Pat and Hamlib to control the PTT. This was d
 sudo rigctld  -p /dev/hidraw2 -P CM108  -C ptt_bitnum=2 -t <PORT>
 ```
 
-(Ensuring the /dev/hidraw\* device has a programmatic name and setting up permissions so it doesn't have to run as root are left as an udev-rule-writing exercise to the user I'll get to Soon(tm)).
+Ensuring the /dev/hidraw\* device has a programmatic name and setting up permissions so it doesn't have to run as root can be done with a udev rule. This worked well for me:
+```
+# DRA-36 PTT (Audio is seperate)
+# Give it permissions that match serial and a consistent symlink
+SUBSYSTEM=="hidraw", ATTRS{idProduct}=="013a", ATTRS{idVendor}=="0d8c", SYMLINK+="hidrawDRA36", GROUP="dialout", MODE="0660",
+```
 
 (Note: At one point, I found during my experimentation I found that hamlib enabling PTT disabled my laptop's keyboard until I unplugged it; this may or may not be an issue with the final setup. This was resolvable with `xinput disable <id>` (where `<id>` was the id number that showed up for the CM108 when I ran xinput with no arguments).)
 
