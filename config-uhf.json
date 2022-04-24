@@ -1,0 +1,16 @@
+{
+    "sender": "ACS-WL",
+    "our_call": "W7ACS-9",
+    "rig_port": "/dev/ttyUSB_TAIT_UHF",
+    "rig_model": "TAIT",
+    "nodes": [
+        {"name": "Beacon Hill #1", "frequency": 430.800, "peer": "W7ACS-10"},
+        {"name": "Beacon Hill #2", "frequency": 439.800, "peer": "W7ACS-10"},
+        {"name": "Capitol Hill #1", "frequency": 430.950, "peer": "W7ACS-10"},
+        {"name": "Capitol Hill #2", "frequency": 439.950, "peer":"W7ACS-10"},
+        {"name": "Magnolia", "frequency": 430.875, "peer":"W7ACS-10"}
+    ],
+    "DISABLED_NODES_97.201_b": [
+        {"name": "Northwest","frequency": 431.000, "peer":"W7ACS-10"}
+    ]
+}
