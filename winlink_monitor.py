@@ -47,19 +47,17 @@ from subprocess import run, CalledProcessError
 import Hamlib
 from tait import Tait
 
-Node = namedtuple("Node", ["name", "frequency", "peer", "channel"])
+Node = namedtuple("Node", ["name", "frequency", "peer"])
 Probe = namedtuple("Probe", ["id", "timestamp"])
 
 # ----- CONFIGURATION HERE -------
-# TEMP: VHF local nodes. ACS doesn't run any, but my test radio is VHF only right now.
-NODES = [   
-    Node("KD7DK-10", 144.900, "KD7DK-10", 1),
-    Node("W7MIR-10", 145.030, "W7MIR-10", 2),
-    Node("KM6SO-10", 145.530, "KM6SO-10", 3),
-    Node("K7NHV-10", 145.045, "K7NHV-10", 4),
-    Node("W7VMI-10", 145.070, "W7VMI-10", 5),
-    Node("KF7ZYF-12", 145.560, "KF7ZYF-12", 6),
-    Node("W7PFB-10", 144.990, "W7PFB-10", 7)
+NODES = [
+    Node("Beacon Hill #1", 430.800, "W7ACS-10"),
+    Node("Beacon Hill #2", 439.800, "W7ACS-10"),
+    Node("Capitol Hill #1", 430.950, "W7ACS-10"),
+    Node("Capitol Hill #2", 439.950, "W7ACS-10"),
+    Node("Magnolia", 430.875, "W7ACS-10"),
+    Node("Northwest", 431.000, "W7ACS-10")
 ]
 
 # Time to wait before trying to fetch the probes
@@ -168,8 +166,8 @@ def send_probe(node):
     body = f"Canary message sent to {node.name} on {node.frequency} at {probe.timestamp}".encode()
     run([PAT, 'compose', '-s', probe.id, CALLSIGN, '-r', SENDER], input=body).check_returncode()
     logging.info(f"Composed. Changing frequency to {node.frequency}..")
-    # Change frequency
-    TAIT.set_channel(node.channel)
+    # Change frequency (Convert to Mhz)
+    TAIT.tune_radio(int(node.frequency * 1e6))
     run([PAT, '-s', 'connect', f'vara:///{node.peer}']).check_returncode()
 
     logging.info(f"Sent!")
