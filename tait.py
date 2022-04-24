@@ -159,6 +159,67 @@ class Tait():
         ret = self.sp.read(20)
         if not ret.startswith(b"+"):
             raise InvalidStateError("The radio returned an error setting rx freq: " + str(ret))
+    
+    '''Set the bandwidth. bandwidth must be a Tait.Bandwidth enum value'''
+    def ccr_set_bandwidth(self, bandwidth):
+        logging.info(f"Setting bandwidth to {bandwidth} in CCR mode")
+        assert type(bandwidth) == Tait.Bandwidth
+        # 7.8.14  - Bandwidth is sent as a decimal number 1-3
+        arg_str = str(bandwidth.value)
+        assert len(arg_str) == 1
+        self.send_tait_cmd("H", arg_str)
+        # Make sure we have an ack
+        ret = self.sp.read(20)
+        if not ret.startswith(b"+"):
+            raise InvalidStateError("The radio returned an error setting bandwidth: " + str(ret))
+
+    '''Set the power level. power must be a Tait.Bandwidth enum value'''
+    def ccr_set_powerlevel(self, power):
+        logging.info(f"Setting power level to {power} in CCR mode")
+        assert type(power) == Tait.PowerLevel
+        # 7.8.13 - Power is sent as a decimal number 1-4
+        arg_str = str(power.value)
+        assert len(arg_str) == 1
+        self.send_tait_cmd("P", arg_str)
+        # Make sure we have an ack
+        ret = self.sp.read(20)
+        if not ret.startswith(b"+"):
+            raise InvalidStateError("The radio returned an error setting power level: " + str(ret))
+
+    '''
+    Sets the Transmit CTCSS tone. Set 0 to disable.
+    The valid range is 67Hz to 254.1 Hz in 0.1 hz increments or 0 to disable
+    '''
+    def ccr_set_tx_ctcss(self, ctcss_tone_freq_hz):
+        assert ctcss_tone_freq_hz == 0 or (ctcss_tone_freq_hz >= 67 and ctcss_tone_freq_hz <= 254.1)
+        # We set this to how many 10th's of hz we want as a 4 digit string. So, we need to multiply by 10 and then take
+        #  the int value to truncate anything more fine-grained than 0.1hz. Then we convert back to string and lpad to 
+        # 4 chars (7.8.6)
+        arg_str = str(int(ctcss_tone_freq_hz * 10)).zfill(4)
+        assert len(arg_str) == 4
+        self.send_tait_cmd("B", arg_str)
+        # Make sure we have an ack
+        ret = self.sp.read(20)
+        if not ret.startswith(b"+"):
+            raise InvalidStateError("The radio returned an error setting TX CTCSS tone: " + str(ret))
+
+
+    '''
+    Sets the Recieve CTCSS tone. Set 0 to disable. If set, mutes audio unless tone is present
+    The valid range is 67Hz to 254.1 Hz in 0.1 hz increments or 0 to disable
+    '''
+    def ccr_set_rx_ctcss(self, ctcss_tone_freq_hz):
+        assert ctcss_tone_freq_hz == 0 or (ctcss_tone_freq_hz >= 67 and ctcss_tone_freq_hz <= 254.1)
+        # We set this to how many 10th's of hz we want as a 4 digit string. So, we need to multiply by 10 and then take
+        #  the int value to truncate anything more fine-grained than 0.1hz. Then we convert back to string and lpad to 
+        # 4 chars (7.8.5)
+        arg_str = str(int(ctcss_tone_freq_hz * 10)).zfill(4)
+        assert len(arg_str) == 4
+        self.send_tait_cmd("A", arg_str)
+        # Make sure we have an ack
+        ret = self.sp.read(20)
+        if not ret.startswith(b"+"):
+            raise InvalidStateError("The radio returned an error setting RX CTCSS tone: " + str(ret))
 
 
 
