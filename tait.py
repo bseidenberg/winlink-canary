@@ -110,6 +110,18 @@ class Tait():
         time.sleep(5)
         return
 
+    '''Hamlib compatible simplex frequency set wrapper'''
+    def set_freq(self, vfo, frequency):
+        self.tune_radio(frequency)
+
+    '''No-op open method to duck-type the usage of hamlib'''
+    def open(self):
+        return
+
+    '''No-op open method to duck-type the usage of hamlib'''
+    def close(self):
+        return
+        
 
     '''Short-cut to tune the radio to a given simplex freq'''
     def tune_radio(self, freq):
