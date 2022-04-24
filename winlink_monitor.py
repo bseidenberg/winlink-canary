@@ -22,14 +22,6 @@
 #
 # Current status: The script is currently in DRAFT status. While parts of it are tested, it is not yet ready for a 
 # "first release"
-#  * The program is currently designed to work with my IC-705, which I'm using for testing/development. A cheaper
-#    target radio is intended for real use.
-#  * We've discovered a set of conditions that allow us to completely crash the stable release of LinPBQ, which ACS
-#    uses to run the nodes. The author has fixed the crash in the latest beta release, but the session still dies.
-#    This appears to be triggered if there is a pending email in CMS for download, and you connect with Pat to our 
-#    LinPBQ nodes via VARA in "Send-Only" mode. It seems to not matter whether or not there's actually a message to send
-#    in the outbox or not. Since finding the bug, the program flow was rewritten in a way that does not trigger this 
-#    issue.
 #  * Logging needs to be cleaned up - and we need to figure out how to handle our output, pat's output, etc.
 #  * It's currently way too aggressive. It sends a message, sleeps 30 seconds, then downloads it from the internet, 
 #    then immediately moves to the next channel. The message send time is ~60s, so it's on-air ~66% of the time (and 
@@ -37,72 +29,134 @@
 #  * There is currently no notification mechanism for failures. This will get written once the rest of everything is
 #    working.
 
+import re
 import sys
 import uuid
 import time
 import logging
 import os
+import json
 from collections import namedtuple, deque
 from subprocess import run, CalledProcessError
 import Hamlib
 
 Node = namedtuple("Node", ["name", "frequency", "peer"])
 Probe = namedtuple("Probe", ["id", "timestamp"])
+NODES = []
 
 # ----- CONFIGURATION HERE -------
-NODES = [
-    Node("Beacon Hill #1", 430.800, "W7ACS-10"),
-    Node("Beacon Hill #2", 439.800, "W7ACS-10"),
-    Node("Capitol Hill #1", 430.950, "W7ACS-10"),
-    Node("Capitol Hill #2", 439.950, "W7ACS-10"),
-    Node("Magnolia", 430.875, "W7ACS-10"),
-    Node("Northwest", 431.000, "W7ACS-10")
-]
-
-# Time to wait before trying to fetch the probes
-FETCH_SLEEP = 2
-
-# Time to wait (seconds) between sending a probe and checking for it. There's then exponential backoff for the retries.
-FETCH_RETRY_INTERVAL = 30
-
-# Number of times to retry looking for a probe. (There's exponential backoff between them - see interval, above)
-FETCH_RETRIES_COUNT = 3
-
-# How many runs we look back at for determining health
-WINDOW_SIZE = 5
-
-# How many of the last ${WINDOW_SIZE} runs that failed we treat as unhealthy.
-UNHEALTHY_THRESHOLD = 3
-
-# Our Call
-CALLSIGN = 'WY2K'
-
-# Sender - It seems like WinLink supresses the message if the envelope header is the recipient
-SENDER = 'ACS-WL' # FIXME DO NOT LIKE
-
-# Mailbox location. 
-MAILBOX_BASE = f"/home/astronut/.local/share/pat/mailbox/{CALLSIGN}"
-
-# Path to the pat binary
-PAT = '/usr/bin/pat'
-
-# Instantiate Hamlib. This is effectively config as it's tunable so we do it here instead of setup.
-# Note that we do not use rigctld because we want to open/close the serial port to allow VARA to share it and VARA does
-# not support rigctld 
-# Disable the very, very verbose logging that hamlib does by default
-Hamlib.rig_set_debug(Hamlib.RIG_DEBUG_NONE)
-# Rig Model
-RIG = Hamlib.Rig(rig_model=Hamlib.RIG_MODEL_IC705)
-
-# Serial port
-RIG.set_conf("rig_pathname", "/dev/ttyACM0")
-
+# NODES = [
+#     Node("Beacon Hill #1", 430.800, "W7ACS-10"),
+#     Node("Beacon Hill #2", 439.800, "W7ACS-10"),
+#     Node("Capitol Hill #1", 430.950, "W7ACS-10"),
+#     Node("Capitol Hill #2", 439.950, "W7ACS-10"),
+#     Node("Magnolia", 430.875, "W7ACS-10"),
+#     Node("Northwest", 431.000, "W7ACS-10")
+# ]
 
 # ------ END CONFIGURATION -------
 
 #  Map of node -> fixed size queue (ring buffer) containing 0 (healthy) or 1 (unhealthy) for each probe
 PROBE_HISTORY = {}
 HEALTH_STATE = {}
+
+def load_config(config_file):
+    config = json.load(open(config_file, 'r'))
+
+    # Time to wait (seconds) between sending a probe and checking for it. There's then exponential backoff for the retries.
+    global FETCH_RETRY_INTERVAL
+    FETCH_RETRY_INTERVAL = int(config.get("fetch_retry_interval_seconds", 30))
+
+    # Number of times to retry looking for a probe. (There's exponential backoff between them - see interval, above)
+    global FETCH_RETRIES_COUNT
+    FETCH_RETRIES_COUNT = int(config.get("fetch_retries_count", 3))
+
+    # How many runs we look back at for determining health
+    global WINDOW_SIZE 
+    WINDOW_SIZE = int(config.get("health_window_size", 5))
+
+    # How many of the last ${WINDOW_SIZE} runs that failed we treat as unhealthy.
+    global UNHEALTHY_THRESHOLD
+    UNHEALTHY_THRESHOLD = int(config.get("unhealthy_threshold", 3))
+
+    # Our Call
+    global CALLSIGN
+    # TODO: I don't like our_call
+    try:
+        CALLSIGN = config['our_call']
+    except KeyError:
+        sys.stderr.write("ERROR: Missing our_call in config!\n")
+        sys.exit(1)
+
+    # Sender - It seems like WinLink supresses the message if the envelope header is the recipient
+    global SENDER
+    try:
+        SENDER = config['sender']
+    except KeyError:
+        sys.stderr.write("ERROR: Missing sender in config!\n")
+        sys.exit(1)
+
+    # Mailbox location. 
+    global MAILBOX_BASE
+    # Note: The default is a.) linux-specific and b.) assumes pat > 0.12.
+    #       The latter assumption should be fine since vara support also assumes this.
+    #       The former assumption really should do more XDG lookups but eh (future TODO)
+    MAILBOX_BASE = config.get(
+        'mailbox_base_path', 
+        f"{os.environ['HOME']}/.local/share/pat/mailbox/{CALLSIGN}")
+
+    # Path to the pat binary
+    global PAT
+    PAT = config.get("pat_bin_path", "pat")
+
+    # Rig serial port path
+    global RIG_PORT_PATH
+    try:
+        RIG_PORT_PATH = config['rig_port']
+    except KeyError:
+        sys.stderr.write("ERROR: Missing rig_port in config!\n")
+        sys.exit(1)
+
+    global RIG_MODEL
+    try:
+        model_str = config['rig_model']
+        # Sigh: There is (as of writing) exactly one constant that has a single lower-case letter
+        if not re.match(r"^RIG_MODEL_[A-Za-z0-9_]+$", model_str):
+            sys.stderr.write("ERROR: Invalid format for rig_model in config! See documentation for help.\n")
+            sys.exit(1)
+        # This is ugly, but this is the best way to do it
+        RIG_MODEL = eval(f"Hamlib.{model_str}")
+    except KeyError:
+        sys.stderr.write("ERROR: Missing rig_model in config!\n")
+        sys.exit(1)
+    except AttributeError:
+        sys.stderr.write(f"ERROR: Could not find model {model_str} in Hamlib. See documentation for help.\n")
+        sys.exit(1)
+
+    
+    # Nodes
+    # TODO: This is tricky - add better error messaging 
+    global NODES
+    for nodeobj in config.get("nodes", []):
+        node = Node(nodeobj["name"], nodeobj["frequency"], nodeobj["peer"])
+        NODES.append(node)
+
+
+
+
+# This is used for debugging but it's useful enough to leave here
+def dump_config():
+    print("FETCH_RETRY_INTERVAL: " + str(FETCH_RETRY_INTERVAL))
+    print("FETCH_RETRIES_COUNT: " + str(FETCH_RETRIES_COUNT))
+    print("WINDOW_SIZE : " + str(WINDOW_SIZE))
+    print("UNHEALTHY_THRESHOLD: " + str(UNHEALTHY_THRESHOLD))
+    print("CALLSIGN: " + CALLSIGN)
+    print("SENDER: " + SENDER)
+    print("MAILBOX_BASE: " + MAILBOX_BASE)
+    print("PAT: " + PAT)
+    print("NODES: " + str(NODES))
+    print("RIG_PORT: " + RIG_PORT_PATH)
+    print("RIG_MODEL: " + str(RIG_MODEL))
 
 def setup():
     # FIXME
@@ -115,6 +169,14 @@ def setup():
     for node in NODES:
         PROBE_HISTORY[node] = deque(maxlen=WINDOW_SIZE)
         HEALTH_STATE[node] = 'PENDING'
+
+    # Instantiate Hamlib. 
+    # Note that we do not use rigctld because we want to open/close the serial port to allow VARA to share it and VARA
+    # does not support rigctld 
+    global RIG
+    Hamlib.rig_set_debug(Hamlib.RIG_DEBUG_NONE) # Disable the very, very verbose logging that hamlib does by default
+    RIG = Hamlib.Rig(rig_model=RIG_MODEL)
+    RIG.set_conf("rig_pathname", RIG_PORT_PATH)    
 
 
 '''
@@ -268,6 +330,11 @@ def assert_outbox_empty():
 # MAIN
 
 if __name__ == "__main__":
+    load_config(sys.argv[1])
+    dump_config()
+    sys.exit(0)
+
+
     setup()
     # FIXME
     #while True:
