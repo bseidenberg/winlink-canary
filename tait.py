@@ -33,7 +33,7 @@ class Tait():
 
     def __init__(self, port, speed):
         # TODO: Tune timeout - think of it as how long we wait for the thing to complete
-        self.sp = serial.Serial(port, speed, timeout=0.5)
+        self.sp = serial.Serial(port, speed, timeout=1)
 
 
     '''Uses CCDI mode to set to a pre-determined channel (requires preprogramming)'''
@@ -66,7 +66,7 @@ class Tait():
         # Look for an error coming back. Success should just be ".", an  error should be something like 
         # ".eXXXXXXXX". In the future we can actually parse these and recognize a bad command vs a bad channel ID, but
         # for now just throw and let the user look it up.
-        ret = self.sp.read(20)
+        ret = self.sp.read_until(b"\r")
         if (len(ret) > 1):
             raise RuntimeError('Tait radio threw error: ', ret)
         
@@ -75,10 +75,10 @@ class Tait():
     '''Returns the current mode of the radio by querying it and inferring'''
     def get_current_mode(self):
         # Flush the buffer from previous state
-        self.sp.read(100000)
+        self.sp._reset_input_buffer()
         # Assume CCDI Mode, send a query
         self.sp.write(bytes("q002F\r", "utf-8"))
-        ret = self.sp.read(20)
+        ret = self.sp.read_until(b"\r")
         if (ret.startswith(b"-")):
             return Tait.Mode.CCR
         elif ret.startswith(b".m08"):
@@ -94,7 +94,7 @@ class Tait():
             return
         elif (current_mode == Tait.Mode.CCDI):
             self.sp.write(bytes("f0200D8\r", "utf-8")) # See 7.5.1 of the Hardware Developer’s Kit Application Manual
-            ret = self.sp.read(20)
+            ret = self.sp.read_until(b"\r")
             if (ret != bytes(".M01R00\r", "utf-8")): # 7.5.3
                 raise InvalidStateError("The radio returned an invalid response when entering CCR: " + str(ret))
             return
@@ -141,7 +141,7 @@ class Tait():
         self.send_tait_cmd("R", freq_str)
 
         # Make sure we have an ack
-        ret = self.sp.read(20)
+        ret = self.sp.read_until(b"\r")
         if not ret.startswith(b"+"):
             raise InvalidStateError("The radio returned an error setting rx freq: " + str(ret))
 
@@ -156,7 +156,7 @@ class Tait():
         self.send_tait_cmd("T", freq_str)
 
         # Make sure we have an ack
-        ret = self.sp.read(20)
+        ret = self.sp.read_until(b"\r")
         if not ret.startswith(b"+"):
             raise InvalidStateError("The radio returned an error setting rx freq: " + str(ret))
     
@@ -169,7 +169,7 @@ class Tait():
         assert len(arg_str) == 1
         self.send_tait_cmd("H", arg_str)
         # Make sure we have an ack
-        ret = self.sp.read(20)
+        ret = self.sp.read_until(b"\r")
         if not ret.startswith(b"+"):
             raise InvalidStateError("The radio returned an error setting bandwidth: " + str(ret))
 
@@ -182,7 +182,7 @@ class Tait():
         assert len(arg_str) == 1
         self.send_tait_cmd("P", arg_str)
         # Make sure we have an ack
-        ret = self.sp.read(20)
+        ret = self.sp.read_until(b"\r")
         if not ret.startswith(b"+"):
             raise InvalidStateError("The radio returned an error setting power level: " + str(ret))
 
@@ -199,7 +199,7 @@ class Tait():
         assert len(arg_str) == 4
         self.send_tait_cmd("B", arg_str)
         # Make sure we have an ack
-        ret = self.sp.read(20)
+        ret = self.sp.read_until(b"\r")
         if not ret.startswith(b"+"):
             raise InvalidStateError("The radio returned an error setting TX CTCSS tone: " + str(ret))
 
@@ -217,7 +217,7 @@ class Tait():
         assert len(arg_str) == 4
         self.send_tait_cmd("A", arg_str)
         # Make sure we have an ack
-        ret = self.sp.read(20)
+        ret = self.sp.read_until(b"\r")
         if not ret.startswith(b"+"):
             raise InvalidStateError("The radio returned an error setting RX CTCSS tone: " + str(ret))
 
@@ -238,7 +238,8 @@ class Tait():
         msg += '\r'
         # Send
         self.sp.write(bytes(msg, "utf-8"))
-        # Checking response is up to the function  
+        # Checking response is up to the function
+
 
     @staticmethod
     def checksum(cmd):
