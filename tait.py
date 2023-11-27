@@ -16,6 +16,7 @@ class Tait():
     class Mode(Enum):
         CCDI = 1
         CCR = 2
+        UNKNOWN = 99
 
     '''Bandwidth settings for CCR mode'''
     class Bandwidth(Enum):
@@ -34,6 +35,7 @@ class Tait():
     def __init__(self, port, speed):
         # TODO: Tune timeout - think of it as how long we wait for the thing to complete
         self.sp = serial.Serial(port, speed, timeout=1)
+        self.mode = Tait.Mode.UNKNOWN
 
 
     '''Uses CCDI mode to set to a pre-determined channel (requires preprogramming)'''
@@ -47,44 +49,37 @@ class Tait():
         assert channel >= 0
         assert channel <= 999
 
-        # "GO_TO_CHANNEL"
-        msg = ("g")
         # The channel number is sent as ASCII string numbers, NOT HEX
         chan_num_str = format(channel, 'd')
-        # Append the size of the argument in hex format
-        msg += format(len(chan_num_str), '02X')
-        # Now append the channel number in decimal format
-        msg += chan_num_str
-        # Now append the checksum
-        msg += self.checksum(msg)
-        # We need a \r
-        msg += '\r'
-        
-        # Send
-        self.sp.write(bytes(msg, "utf-8"))
 
+        # "GO_TO_CHANNEL"
+        ret = self.send_tait_cmd("g", chan_num_str)
         # Look for an error coming back. Success should just be ".", an  error should be something like 
         # ".eXXXXXXXX". In the future we can actually parse these and recognize a bad command vs a bad channel ID, but
         # for now just throw and let the user look it up.
-        ret = self.sp.read_until(b"\r")
         if (len(ret) > 1):
             raise RuntimeError('Tait radio threw error: ', ret)
-        
         logging.info("Changed to channel " + str(channel))
 
-    '''Returns the current mode of the radio by querying it and inferring'''
+    '''Returns the cached current mode'''
     def get_current_mode(self):
+        if self.mode == Tait.Mode.UNKNOWN:
+            return self.get_current_mode_radio()
+        return self.mode
+
+    '''Returns the current mode of the radio by querying it and inferring'''
+    def get_current_mode_radio(self):
         # Flush the buffer from previous state
         self.sp._reset_input_buffer()
         # Assume CCDI Mode, send a query
-        self.sp.write(bytes("q002F\r", "utf-8"))
-        ret = self.sp.read_until(b"\r")
+        ret = self.send_tait_cmd('q', '')
         if (ret.startswith(b"-")):
-            return Tait.Mode.CCR
+            self.mode = Tait.Mode.CCR
         elif ret.startswith(b".m08"):
-            return Tait.Mode.CCDI
+            self.mode =  Tait.Mode.CCDI
         else:
             raise InvalidStateError("Unknown response to status command: " + str(ret))
+        return self.mode
 
 
     '''Transitions from CCDI mode to CCR mode'''
@@ -138,10 +133,8 @@ class Tait():
         # The frequency is sent as ASCII string numbers, NOT HEX
         freq_str = format(freq, 'd')
         assert len(freq_str) >= 8 and len(freq_str) <= 9 # Per 7.8.2
-        self.send_tait_cmd("R", freq_str)
-
+        ret = self.send_tait_cmd("R", freq_str)
         # Make sure we have an ack
-        ret = self.sp.read_until(b"\r")
         if not ret.startswith(b"+"):
             raise InvalidStateError("The radio returned an error setting rx freq: " + str(ret))
 
@@ -153,10 +146,8 @@ class Tait():
         # The frequency is sent as ASCII string numbers, NOT HEX
         freq_str = format(freq, 'd')
         assert len(freq_str) >= 8 and len(freq_str) <= 9 # Per 7.8.3
-        self.send_tait_cmd("T", freq_str)
-
+        ret = self.send_tait_cmd("T", freq_str)
         # Make sure we have an ack
-        ret = self.sp.read_until(b"\r")
         if not ret.startswith(b"+"):
             raise InvalidStateError("The radio returned an error setting rx freq: " + str(ret))
     
@@ -167,9 +158,8 @@ class Tait():
         # 7.8.14  - Bandwidth is sent as a decimal number 1-3
         arg_str = str(bandwidth.value)
         assert len(arg_str) == 1
-        self.send_tait_cmd("H", arg_str)
+        ret = self.send_tait_cmd("H", arg_str)
         # Make sure we have an ack
-        ret = self.sp.read_until(b"\r")
         if not ret.startswith(b"+"):
             raise InvalidStateError("The radio returned an error setting bandwidth: " + str(ret))
 
@@ -180,9 +170,8 @@ class Tait():
         # 7.8.13 - Power is sent as a decimal number 1-4
         arg_str = str(power.value)
         assert len(arg_str) == 1
-        self.send_tait_cmd("P", arg_str)
+        ret = self.send_tait_cmd("P", arg_str)
         # Make sure we have an ack
-        ret = self.sp.read_until(b"\r")
         if not ret.startswith(b"+"):
             raise InvalidStateError("The radio returned an error setting power level: " + str(ret))
 
@@ -197,9 +186,8 @@ class Tait():
         # 4 chars (7.8.6)
         arg_str = str(int(ctcss_tone_freq_hz * 10)).zfill(4)
         assert len(arg_str) == 4
-        self.send_tait_cmd("B", arg_str)
+        ret = self.send_tait_cmd("B", arg_str)
         # Make sure we have an ack
-        ret = self.sp.read_until(b"\r")
         if not ret.startswith(b"+"):
             raise InvalidStateError("The radio returned an error setting TX CTCSS tone: " + str(ret))
 
@@ -215,9 +203,8 @@ class Tait():
         # 4 chars (7.8.5)
         arg_str = str(int(ctcss_tone_freq_hz * 10)).zfill(4)
         assert len(arg_str) == 4
-        self.send_tait_cmd("A", arg_str)
+        ret = self.send_tait_cmd("A", arg_str)
         # Make sure we have an ack
-        ret = self.sp.read_until(b"\r")
         if not ret.startswith(b"+"):
             raise InvalidStateError("The radio returned an error setting RX CTCSS tone: " + str(ret))
 
@@ -238,7 +225,9 @@ class Tait():
         msg += '\r'
         # Send
         self.sp.write(bytes(msg, "utf-8"))
-        # Checking response is up to the function
+        # Return the response back to the caller
+        return self.sp.read_until(b"\r")
+
 
 
     @staticmethod
