@@ -3,27 +3,40 @@
 The Winlink Canary takes a JSON configuration file as the first argument to the program. While this document breaks the keys into logical sections, the actual configuration file is flat (other than the nodes array).
 
 ## Winlink/PAT Configuration
-### our_call
-**The callsign we are using to fetch messages.**
+### pat_call
+**The callsign we are using to connect to the winlink network.**
 
 _Type:_ String
 
 _Required:_ Yes
 
-This callsign is the recipient of all test messages. It is expected that the Pat config "telnet" will fetch messages using this call.
+This callsign is what is used to connect to the winlink network. It is expected that the Pat config "telnet" will fetch messages for `rx_aux_call` using this call (so they end up in the mailbox for `pat_call`). Note that we will NOT fetch messages destined for `pat_call` directly, so long as
+we're running pat >= 0.15.1.
  
 (It's also assumed this is the over-the-air callsign but I don't actually think anything depends on this assumption.)
+
+### rx_aux_call
+***The callsign used as the recipient of our test messages.***
+
+_Type:_ String
+
+_Required:_ Yes (TODO: FIXME)
+
+This callsign is used as the recipient of our health probes. It is recommended that this is a tactical call sign different from pat_call. This must be set up in the `auxiliary_addresses` section of the pat config.
+
+With pat >= 0.15.1, we will ONLY fetch the auxillary address mail and not the pat_call mail.
+
 
 ### sender
 **The email address or Winlink call that test messages are sent from**
 
 _Type:_ String
 
-_Required:_ Yes
+_Required:_ No
 
-This is the envelope header sender for the winlink message. There is no authenticaiton for this value. 
+This is the envelope header sender for the winlink message. There is no authenticaiton for this value. If unset, we default to pat_call.
 
-**_Important Note:_** This value must be different than our_call because Winlink will drop messages addressed to the sender. 
+**_Important Note:_** This value must be different than rx_ax_call because Winlink will drop messages addressed to the sender. 
 
 ### pat_bin_path
 **The path to the pat binary.**

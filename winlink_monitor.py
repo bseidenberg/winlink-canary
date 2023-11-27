@@ -45,6 +45,10 @@ Node = namedtuple("Node", ["name", "frequency", "peer"])
 Probe = namedtuple("Probe", ["id", "timestamp"])
 NODES = []
 
+# Set the EXPERIMENTAL pat option for aux callsign only
+env = os.environ.copy()
+env['FW_AUX_ONLY_EXPERIMENT']="1"
+
 # ----- CONFIGURATION HERE -------
 # NODES = [
 #     Node("Beacon Hill #1", 430.800, "W7ACS-10"),
@@ -80,30 +84,39 @@ def load_config(config_file):
     UNHEALTHY_THRESHOLD = int(config.get("unhealthy_threshold", 3))
 
     # Our Call
-    global CALLSIGN
-    # TODO: I don't like our_call
+    global PAT_CALLSIGN
     try:
-        CALLSIGN = config['our_call']
+        PAT_CALLSIGN = config['pat_call']
     except KeyError:
-        sys.stderr.write("ERROR: Missing our_call in config!\n")
+        sys.stderr.write("ERROR: Missing pat_call in config!\n")
         sys.exit(1)
+    
+    # TODO: Make this optional
+    global RX_AUX_CALLSIGN 
+    try:
+       RX_AUX_CALLSIGN = config['rx_aux_call']
+    except KeyError:
+        sys.stderr.write("ERROR: Missing rx_aux_call in config!\n")
+        sys.exit(1)
+    
 
     # Sender - It seems like WinLink supresses the message if the envelope header is the recipient
     global SENDER
     try:
         SENDER = config['sender']
     except KeyError:
-        sys.stderr.write("ERROR: Missing sender in config!\n")
-        sys.exit(1)
+        SENDER = PAT_CALLSIGN
 
-    # Mailbox location. 
+        
+
+    # Mailbox location - Aux messages come into this mailbox FOR NOW - this may change
     global MAILBOX_BASE
     # Note: The default is a.) linux-specific and b.) assumes pat > 0.12.
     #       The latter assumption should be fine since vara support also assumes this.
     #       The former assumption really should do more XDG lookups but eh (future TODO)
     MAILBOX_BASE = config.get(
         'mailbox_base_path', 
-        f"{os.environ['HOME']}/.local/share/pat/mailbox/{CALLSIGN}")
+        f"{os.environ['HOME']}/.local/share/pat/mailbox/{PAT_CALLSIGN}")
 
     # Path to the pat binary
     global PAT
@@ -154,7 +167,7 @@ def dump_config():
     print("FETCH_RETRIES_COUNT: " + str(FETCH_RETRIES_COUNT))
     print("WINDOW_SIZE : " + str(WINDOW_SIZE))
     print("UNHEALTHY_THRESHOLD: " + str(UNHEALTHY_THRESHOLD))
-    print("CALLSIGN: " + CALLSIGN)
+    print("CALLSIGN: " + PAT_CALLSIGN)
     print("SENDER: " + SENDER)
     print("MAILBOX_BASE: " + MAILBOX_BASE)
     print("PAT: " + PAT)
@@ -241,13 +254,14 @@ def send_probe(node):
     
     logging.info(f"Composing {probe.id} to {node.name} at {probe.timestamp}")
     body = f"Canary message sent to {node.name} on {node.frequency} at {probe.timestamp}".encode()
-    run([PAT, 'compose', '-s', probe.id, CALLSIGN, '-r', SENDER], input=body).check_returncode()
+    run([PAT, 'compose', '-s', probe.id, RX_AUX_CALLSIGN, '-r', SENDER], input=body, env=env).check_returncode()
     logging.info(f"Composed. Changing frequency to {node.frequency}..")
-    # Change frequency - we open and close the RIG handle to avoid fighting with VARA on the serial port
+    # Change frequency - we open and close the RIG handle to avoid fighting with VARA on the serial port 
+    # if it's being used for PTT (ex: IC-705). Doesn't matter for a DRA/Signalink.
     RIG.open()
     RIG.set_freq(Hamlib.RIG_VFO_CURR, int(node.frequency * 1e6))
     RIG.close()
-    run([PAT, '-s', 'connect', f'vara:///{node.peer}']).check_returncode()
+    run([PAT, '-s', 'connect', f'varafm:///{node.peer}'], env=env).check_returncode()
 
     logging.info(f"Sent!")
 
@@ -281,7 +295,7 @@ def fetch_all():
 
 def download_mail_via_telnet():
     # Run pat over telnet to download all of our pending messages
-    run([PAT, 'connect', 'telnet']).check_returncode()
+    run([PAT, 'connect', 'telnet'], env=env).check_returncode()
 
 def find_all_ids():
     # Basically grep Subject: $MAILBOX_DIR/* | cut -d : -f 2
