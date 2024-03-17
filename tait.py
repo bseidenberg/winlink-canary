@@ -3,6 +3,8 @@ import serial, numpy, logging, time
 from enum import Enum
 
 class Tait():
+    # Number of times to attempt to write a serial command to the tait.
+    TAIT_WRITE_TRIES = 5
 
     # The radio can be in several different modes, but we're most concerned with Computer-Controlled Data Interface 
     # (CCDI) and Computer-Controlled Radio (CCR) modes.
@@ -210,8 +212,15 @@ class Tait():
 
 
 
-    '''Send raw commands to the radio. Assumes the arg is a string (you must convert in advance)'''    
+    '''
+    Send raw commands to the radio. Assumes the arg is a string (you must convert in advance).
+    
+    At least one of the author's Tait radios has a nasty habit of not responding sometimes. So, we're going to do retries.
+    (We can't do exponential retries because modifying the read timeout requires closing/re-opening the serial device)
+
+    '''    
     def send_tait_cmd(self, cmd, arg_str):
+        
         # Start with the cmd
         msg = str(cmd)
         assert len(msg) == 1
@@ -223,12 +232,15 @@ class Tait():
         msg += self.checksum(msg)
         # We need a \r
         msg += '\r'
-        # Send
-        self.sp.write(bytes(msg, "utf-8"))
-        # Return the response back to the caller
-        return self.sp.read_until(b"\r")
 
-
+        for i in range(self.TAIT_WRITE_TRIES):
+            try:
+                # Send
+                self.sp.write(bytes(msg, "utf-8"))
+                # Return the response back to the caller
+                return self.sp.read_until(b"\r")
+            except:
+                continue
 
     @staticmethod
     def checksum(cmd):
