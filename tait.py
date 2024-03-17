@@ -90,6 +90,8 @@ class Tait():
         if (current_mode == Tait.Mode.CCR):
             return
         elif (current_mode == Tait.Mode.CCDI):
+            # Clear the buffer - we've seen extraneous .'s
+            self.sp._reset_input_buffer()
             self.sp.write(bytes("f0200D8\r", "utf-8")) # See 7.5.1 of the Hardware Developer’s Kit Application Manual
             ret = self.sp.read_until(b"\r")
             if (ret != bytes(".M01R00\r", "utf-8")): # 7.5.3
@@ -105,6 +107,8 @@ class Tait():
         self.sp.write(b"^\r")
         # Wait for the radio to reboot
         time.sleep(5)
+        # Reset the mode flag
+        self.mode = self.Mode.UNKNOWN
         return
 
     '''Hamlib compatible simplex frequency set wrapper'''
@@ -216,8 +220,6 @@ class Tait():
     Send raw commands to the radio. Assumes the arg is a string (you must convert in advance).
     
     At least one of the author's Tait radios has a nasty habit of not responding sometimes. So, we're going to do retries.
-    (We can't do exponential retries because modifying the read timeout requires closing/re-opening the serial device)
-
     '''    
     def send_tait_cmd(self, cmd, arg_str):
         
@@ -234,14 +236,25 @@ class Tait():
         msg += '\r'
 
         for i in range(self.TAIT_WRITE_TRIES):
-            try:
-                # Send
-                self.sp.write(bytes(msg, "utf-8"))
-                # Return the response back to the caller
-                return self.sp.read_until(b"\r")
-            except:
-                continue
+            #print("DEBUG: sending msg: " + msg + "\n")
+            # Send
+            self.sp.write(bytes(msg, "utf-8"))
+            # Return the response back to the caller
+            ret = self.sp.read_until(b"\r")
 
+            # The most common failure mode we've seen is on the SACS UHF Tait:
+            #  A command will be sent and we will not get any reply back. 
+            #  If we retry the command, we get a checksum error, but it will work on the third try.
+            #  This probbaly indicates some sort of corruption on send (the newline doesn't make it through?)
+            #  or internal to the radio. 
+            # TODO FIXME: let's onlt retry on specific errors (eg, checksum errors) and pass the rest upstream
+            if ret != b'' and (self.mode != self.Mode.CCR or str(ret).startswith("b'+")):
+                return ret
+            #print("DEBUG: bad response '"+ str(ret) + "', retrying")
+            time.sleep(i)
+
+        raise InvalidStateError("The radio failed to respond after " + str(self.TAIT_WRITE_TRIES) + "tries.")
+    
     @staticmethod
     def checksum(cmd):
         total = 0
