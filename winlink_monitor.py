@@ -261,6 +261,10 @@ def run_loop_step():
     # Clean up
     clear_inbox()
 
+    # Throttle the loop
+    global NEXT_PASS_DELAY
+    sleep NEXT_PASS_DELAY
+
 '''
 Checks the health of a node. Returns True for healthy, False for unhealthy
 '''
