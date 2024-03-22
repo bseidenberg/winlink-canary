@@ -1,8 +1,8 @@
 # Winlink/VARA node monitor
 #
-# This program is designed to act as a canary (health monitor) for the SeattleACS Winlink/VARA nodes. 
+# This program is designed to act as a canary (health monitor) for the SeattleACS Winlink/VARA nodes.
 # It is designed to use Pat to periodically send messages through them, then verify the messages were readable through
-# a telnet (internet) connection to Winlink CMS. 
+# a telnet (internet) connection to Winlink CMS.
 #
 # Copyright (C) 2021-2022 Benjamin Seidenberg, WY2K
 #
@@ -20,15 +20,16 @@
 #
 #
 #
-# Current status: The script is currently in DRAFT status. While parts of it are tested, it is not yet ready for a 
+# Current status: The script is currently in DRAFT status. While parts of it are tested, it is not yet ready for a
 # "first release"
 #  * Logging needs to be cleaned up - and we need to figure out how to handle our output, pat's output, etc.
-#  * It's currently way too aggressive. It sends a message, sleeps 30 seconds, then downloads it from the internet, 
-#    then immediately moves to the next channel. The message send time is ~60s, so it's on-air ~66% of the time (and 
+#  * It's currently way too aggressive. It sends a message, sleeps 30 seconds, then downloads it from the internet,
+#    then immediately moves to the next channel. The message send time is ~60s, so it's on-air ~66% of the time (and
 #    more TX than RX). This will hog the channels. We need to put in way more sleep.
 #  * There is currently no notification mechanism for failures. This will get written once the rest of everything is
 #    working.
 
+import argparse
 import re
 import sys
 import uuid
@@ -64,8 +65,13 @@ env['FW_AUX_ONLY_EXPERIMENT']="1"
 PROBE_HISTORY = {}
 HEALTH_STATE = {}
 
-def load_config(config_file):
-    config = json.load(open(config_file, 'r'))
+
+def str2bool(arg):
+    return arg.lower() in ['true', '1', 't', 'y', 'yes']
+
+
+def load_config(args):
+    config = json.load(open(args.config, 'r'))
 
     # Time to wait (seconds) between sending a probe and checking for it. There's then exponential backoff for the retries.
     global FETCH_RETRY_INTERVAL
@@ -76,12 +82,29 @@ def load_config(config_file):
     FETCH_RETRIES_COUNT = int(config.get("fetch_retries_count", 3))
 
     # How many runs we look back at for determining health
-    global WINDOW_SIZE 
+    global WINDOW_SIZE
     WINDOW_SIZE = int(config.get("health_window_size", 5))
+
+    # How many runs we look back at for determining health
+    global NEXT_PASS_DELAY
+    if args.next_pass_delay > 0:
+        NEXT_PASS_DELAY = args.next_pass_delay
+    else:
+        NEXT_PASS_DELAY = int(config.get("next_pass_delay", 3600))
 
     # How many of the last ${WINDOW_SIZE} runs that failed we treat as unhealthy.
     global UNHEALTHY_THRESHOLD
     UNHEALTHY_THRESHOLD = int(config.get("unhealthy_threshold", 3))
+
+    # DEDICATED_MAILBOX (True/False)
+    # How to handle the outbox
+    # True: if the mailbox being used is dedicated to this funciton, then we can
+    #   assume anything we find in the outbox at the start of a pass is left over
+    #   from an aborted run, and remove it.
+    # False: if the mailbox being used is shared with a real user, then if we find
+    #   any mail there, be extra cautious and abort until the user clears the mail.
+    global DEDICATED_MAILBOX
+    DEDICATED_MAILBOX = str2bool(config.get("dedicated_mailbox", 'False'))
 
     # Our Call
     global PAT_CALLSIGN
@@ -90,15 +113,15 @@ def load_config(config_file):
     except KeyError:
         sys.stderr.write("ERROR: Missing pat_call in config!\n")
         sys.exit(1)
-    
+
     # TODO: Make this optional
-    global RX_AUX_CALLSIGN 
+    global RX_AUX_CALLSIGN
     try:
-       RX_AUX_CALLSIGN = config['rx_aux_call']
+        RX_AUX_CALLSIGN = config['rx_aux_call']
     except KeyError:
         sys.stderr.write("ERROR: Missing rx_aux_call in config!\n")
         sys.exit(1)
-    
+
 
     # Sender - It seems like WinLink supresses the message if the envelope header is the recipient
     global SENDER
@@ -107,7 +130,6 @@ def load_config(config_file):
     except KeyError:
         SENDER = PAT_CALLSIGN
 
-        
 
     # Mailbox location - Aux messages come into this mailbox FOR NOW - this may change
     global MAILBOX_BASE
@@ -133,7 +155,7 @@ def load_config(config_file):
     global RIG_MODEL
     try:
         model_str = config['rig_model']
-        if (model_str == "TAIT"):
+        if model_str == "TAIT":
             # Skip Hamlib
             RIG_MODEL = "TAIT"
         else:
@@ -150,15 +172,21 @@ def load_config(config_file):
         sys.stderr.write(f"ERROR: Could not find model {model_str} in Hamlib. See documentation for help.\n")
         sys.exit(1)
 
-    
+
     # Nodes
-    # TODO: This is tricky - add better error messaging 
+    # TODO: This is tricky - add better error messaging
     global NODES
     for nodeobj in config.get("nodes", []):
         node = Node(nodeobj["name"], nodeobj["frequency"], nodeobj["peer"])
+        if args.nodes:
+            if node.name not in args.nodes and node.peer not in args.nodes:
+                continue
         NODES.append(node)
 
-
+    if args.list:
+        for node in NODES:
+            print('%s: %s, %s' % (node.name, node.peer, node.frequency))
+        sys.exit(0)
 
 
 # This is used for debugging but it's useful enough to leave here
@@ -167,6 +195,7 @@ def dump_config():
     print("FETCH_RETRIES_COUNT: " + str(FETCH_RETRIES_COUNT))
     print("WINDOW_SIZE : " + str(WINDOW_SIZE))
     print("UNHEALTHY_THRESHOLD: " + str(UNHEALTHY_THRESHOLD))
+    print("DEDICATED_MAILBOX: " + DEDICATED_MAILBOX)
     print("CALLSIGN: " + PAT_CALLSIGN)
     print("SENDER: " + SENDER)
     print("MAILBOX_BASE: " + MAILBOX_BASE)
@@ -178,7 +207,7 @@ def dump_config():
 def setup():
     # FIXME
     logging.basicConfig(level=logging.DEBUG)
-    
+
     # Check VARA's health
     pass # TODO
 
@@ -187,17 +216,17 @@ def setup():
         PROBE_HISTORY[node] = deque(maxlen=WINDOW_SIZE)
         HEALTH_STATE[node] = 'PENDING'
 
-    # Instantiate Hamlib. 
+    # Instantiate Hamlib.
     # Note that we do not use rigctld because we want to open/close the serial port to allow VARA to share it and VARA
-    # does not support rigctld 
+    # does not support rigctld
     global RIG
-    if (RIG_MODEL == "TAIT"):
+    if RIG_MODEL == "TAIT":
         # TODO: Serial Speed via config
         RIG = Tait(RIG_PORT_PATH, 9600)
     else:
         Hamlib.rig_set_debug(Hamlib.RIG_DEBUG_NONE) # Disable the very, very verbose logging that hamlib does by default
         RIG = Hamlib.Rig(rig_model=RIG_MODEL)
-        RIG.set_conf("rig_pathname", RIG_PORT_PATH)    
+        RIG.set_conf("rig_pathname", RIG_PORT_PATH)
 
 
 
@@ -218,7 +247,7 @@ def run_loop_step():
             PROBE_HISTORY[node].append(0)
         else:
             PROBE_HISTORY[node].append(1)
-    
+
     # Calculate the new health state
     new_health_state = calculate_health_state()
 
@@ -236,8 +265,12 @@ def run_loop_step():
 Checks the health of a node. Returns True for healthy, False for unhealthy
 '''
 def check_health(node):
-    assert_outbox_empty()
-    try: 
+    if DEDICATED_MAILBOX:
+        clear_outbox()
+    else:
+        assert_outbox_empty()
+
+    try:
         pending_probe = send_probe(node)
         assert_outbox_empty
     except (RuntimeError, CalledProcessError):
@@ -247,16 +280,16 @@ def check_health(node):
         return False
 
     return poll_for_probe(pending_probe)
-    
+
 
 def send_probe(node):
     probe = Probe(str(uuid.uuid4()), time.time())
-    
+
     logging.info(f"Composing {probe.id} to {node.name} at {probe.timestamp}")
     body = f"Canary message sent to {node.name} on {node.frequency} at {probe.timestamp}".encode()
     run([PAT, 'compose', '-s', probe.id, RX_AUX_CALLSIGN, '-r', SENDER], input=body, env=env).check_returncode()
     logging.info(f"Composed. Changing frequency to {node.frequency}..")
-    # Change frequency - we open and close the RIG handle to avoid fighting with VARA on the serial port 
+    # Change frequency - we open and close the RIG handle to avoid fighting with VARA on the serial port
     # if it's being used for PTT (ex: IC-705). Doesn't matter for a DRA/Signalink.
     RIG.open()
     RIG.set_freq(Hamlib.RIG_VFO_CURR, int(node.frequency * 1e6))
@@ -269,7 +302,7 @@ def send_probe(node):
 
 def poll_for_probe(probe):
     sleep_int = FETCH_RETRY_INTERVAL
-    for i in range(FETCH_RETRIES_COUNT):
+    for _i in range(FETCH_RETRIES_COUNT):
         logging.info(f"Try {i+1} to fetch probe {probe.id}. Will sleep {sleep_int} seconds first...")
         # Sleep first to give the remote system time to handle the sent mail
         time.sleep(sleep_int)
@@ -281,11 +314,11 @@ def poll_for_probe(probe):
         if probe.id in rxd_probe_ids:
             logging.info("Probe found!")
             return True
-        
+
         # Exponential Backoff
         logging.info("Probe not found, sleeping...")
         sleep_int = 2*sleep_int
-    
+
     logging.info(f"Giving up on probe {probe.id}")
     return False
 
@@ -312,7 +345,7 @@ def calculate_health_state():
             state[node] = 'PENDING'
             continue
         failed = sum(history)
-        if (failed >= UNHEALTHY_THRESHOLD):
+        if failed >= UNHEALTHY_THRESHOLD:
             state[node] = 'UNHEALTHY'
         else:
             state[node] = 'HEALTHY'
@@ -331,35 +364,44 @@ def history_string(history):
 
 def diff_and_report_health_state(old, new):
     for (node, health) in new.items():
-        if (old[node] != health):
+        if old[node] != health:
             # TODO - Real reporting
             logging.info(f"STATE CHANGE: {node.name} transitioned {old[node]} -> {health}")
-            
+
 
 def clear_inbox():
     # No .check_returncode because we may not have any (on failure)
     run(f'rm {MAILBOX_BASE}/in/*', shell=True)
 
 def clear_outbox():
-    run(f'rm {MAILBOX_BASE}/out/*', shell=True).check_returncode()
+    run(f'rm -f {MAILBOX_BASE}/out/*', shell=True).check_returncode()
 
 def assert_outbox_empty():
     # Assert the outbox is empty
     if len(os.listdir(MAILBOX_BASE + "/out")) > 0:
         raise RuntimeError("Outbox is non-empty - We don't handle this yet")
-    
 
 
 # MAIN
 
 if __name__ == "__main__":
-    load_config(sys.argv[1])
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-d', '--daemon', help='deamon mode (run continuously)', default=False, action='store_true')
+    parser.add_argument('-c', '--count', help='number of passes to run', default='10', type=int)
+    parser.add_argument('--next-pass-delay', help='time to wait between passes', default=0, type=int)
+    parser.add_argument('-l', '--list', help='list systems available to test', action='store_true')
+    parser.add_argument('config', help='configuration file')
+    parser.add_argument('nodes', nargs='*', help='specific systems to test (either name or peer call)', default=[])
+    args = parser.parse_args()
+
+    load_config(args)
     #dump_config()
     #sys.exit(0)
 
-
     setup()
-    # FIXME
-    #while True:
-    for i in range(10):
-        run_loop_step()
+    if args.daemon:
+        while True:
+            run_loop_step()
+    else:
+        for _count in range(int(args.count)):
+            run_loop_step()
