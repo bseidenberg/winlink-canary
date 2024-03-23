@@ -406,8 +406,8 @@ if __name__ == "__main__":
             run_loop_step()
             time.sleep(NEXT_PASS_DELAY)
     else:
-        for _count in range(int(args.count)):
+        for count in range(int(args.count)):
             run_loop_step()
-            if i == args.count:
+            if count == args.count - 1:
                 sys.exit(0)
             time.sleep(NEXT_PASS_DELAY)
