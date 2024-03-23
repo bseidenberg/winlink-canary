@@ -71,6 +71,7 @@ def str2bool(arg):
 
 
 def load_config(args):
+    # TODO(dpk): rather than a passel of globals, lets build and return a config dictionary
     config = json.load(open(args.config, 'r'))
 
     # Time to wait (seconds) between sending a probe and checking for it. There's then exponential backoff for the retries.
@@ -195,6 +196,7 @@ def dump_config():
     print("FETCH_RETRIES_COUNT: " + str(FETCH_RETRIES_COUNT))
     print("WINDOW_SIZE : " + str(WINDOW_SIZE))
     print("UNHEALTHY_THRESHOLD: " + str(UNHEALTHY_THRESHOLD))
+    print("NEXT_PASS_DELAY: " + str(NEXT_PASS_DELAY))
     print("DEDICATED_MAILBOX: " + DEDICATED_MAILBOX)
     print("CALLSIGN: " + PAT_CALLSIGN)
     print("SENDER: " + SENDER)
@@ -204,9 +206,17 @@ def dump_config():
     print("RIG_PORT: " + RIG_PORT_PATH)
     print("RIG_MODEL: " + str(RIG_MODEL))
 
-def setup():
-    # FIXME
-    logging.basicConfig(level=logging.DEBUG)
+def setup(args):
+    '''Initialize key data structures and initialize radios and VARAFM modems.
+    args - parsed arguemnts from argparse
+    '''
+
+    if args.verbose >= 2:
+        logging.basicConfig(level=logging.DEBUG)
+    elif args.verbose == 1:
+        logging.basicConfig(level=logging.INFO)
+    else:
+        logging.basicConfig(level=logging.NOTICE)
 
     # Check VARA's health
     pass # TODO
@@ -320,7 +330,7 @@ def poll_for_probe(probe):
         logging.info("Probe not found, sleeping...")
         sleep_int = 2*sleep_int
 
-    logging.info(f"Giving up on probe {probe.id}")
+    logging.notice(f"Giving up on probe {probe.id}")
     return False
 
 def fetch_all():
@@ -367,7 +377,7 @@ def diff_and_report_health_state(old, new):
     for (node, health) in new.items():
         if old[node] != health:
             # TODO - Real reporting
-            logging.info(f"STATE CHANGE: {node.name} transitioned {old[node]} -> {health}")
+            logging.notice(f"STATE CHANGE: {node.name} transitioned {old[node]} -> {health}")
 
 
 def clear_inbox():
@@ -391,6 +401,7 @@ if __name__ == "__main__":
     parser.add_argument('-c', '--count', help='number of passes to run', default='10', type=int)
     parser.add_argument('--next-pass-delay', help='time to wait between passes', default=0, type=int)
     parser.add_argument('-l', '--list', help='list systems available to test', action='store_true')
+    parser.add_argument('-v', '--verbose', action='count', default=0)
     parser.add_argument('config', help='configuration file')
     parser.add_argument('nodes', nargs='*', help='specific systems to test (either name or peer call)', default=[])
     args = parser.parse_args()
@@ -400,7 +411,7 @@ if __name__ == "__main__":
     #sys.exit(0)
 
     global NEXT_PASS_DELAY
-    setup()
+    setup(args)
     if args.daemon:
         while True:
             run_loop_step()
