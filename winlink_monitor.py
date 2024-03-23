@@ -71,6 +71,10 @@ def str2bool(arg):
 
 
 def load_config(args):
+    '''Parse config file and do some config syntax and sanity checking.
+       Aborts on detection invalid conifg file.
+    '''
+
     # TODO(dpk): rather than a passel of globals, lets build and return a config dictionary
     config = json.load(open(args.config, 'r'))
 
@@ -208,7 +212,7 @@ def dump_config():
 
 def setup(args):
     '''Initialize key data structures and initialize radios and VARAFM modems.
-    args - parsed arguemnts from argparse
+       args - parsed arguemnts from argparse
     '''
 
     if args.verbose >= 2:
@@ -240,17 +244,18 @@ def setup(args):
 
 
 
-'''
-This is the main logic loop for the canary. We invoke this from inside a loop - each invocation is a step.
-
-Each step does the following:
-* For each node, sends a probe over RF then polls over the internet to ensure it's recieved.
-* Adds an entry to each node's health buffer for either healthy or unhealthy
-* Checks the state of the buffer to calculate whether a node is HEALTHY, UNHEALTHY or PENDING (insufficient data)
-* Determines which nodes changed states in this pass, and reports the change
-'''
 def run_loop_step():
-    # Check the health of each node, and append it to the node's circular buffer of health status
+    '''Check the health of each node.
+       Append healty to the node's circular buffer of health status
+       This is the main logic loop for the canary. We invoke this from inside a loop - each invocation is a step.
+
+       Each step does the following:
+       For each node, sends a probe over RF then polls over the internet to ensure it's recieved.
+       Adds an entry to each node's health buffer for either healthy or unhealthy
+       Checks the state of the buffer to calculate whether a node is HEALTHY, UNHEALTHY or PENDING (insufficient data)
+       Determines which nodes changed states in this pass, and reports the change
+    '''
+
     for node in NODES:
         success = check_health(node)
         if success:
@@ -272,10 +277,12 @@ def run_loop_step():
     clear_inbox()
 
 
-'''
-Checks the health of a node. Returns True for healthy, False for unhealthy
-'''
 def check_health(node):
+    '''
+    Checks the health of a node.
+    Returns True for healthy, False for unhealthy
+    '''
+
     if DEDICATED_MAILBOX:
         clear_outbox()
     else:
@@ -338,12 +345,16 @@ def fetch_all():
     return find_all_ids()
 
 def download_mail_via_telnet():
-    # Run pat over telnet to download all of our pending messages
+    '''Run pat over telnet to download all of our pending messages'''
     run([PAT, 'connect', 'telnet'], env=env).check_returncode()
 
 def find_all_ids():
-    # Basically grep Subject: $MAILBOX_DIR/* | cut -d : -f 2
-    # (OK... I just shelled out instead of writing it natively - exactly that)
+    '''Find all ids in inbox.
+       Basically grep Subject: $MAILBOX_DIR/* | cut -d : -f 2
+       (OK... I just shelled out instead of writing it natively - exactly that)
+       Returns a set of discovered ids.
+    '''
+
     output = run(f'grep -h Subject {MAILBOX_BASE}/in/* | cut -d : -f 2', shell=True, capture_output=True).stdout
     return set(map(str.strip, output.decode('utf-8').splitlines()))
 
@@ -388,7 +399,7 @@ def clear_outbox():
     run(f'rm -f {MAILBOX_BASE}/out/*', shell=True).check_returncode()
 
 def assert_outbox_empty():
-    # Assert the outbox is empty
+    '''Assert the outbox is empty.'''
     if len(os.listdir(MAILBOX_BASE + "/out")) > 0:
         raise RuntimeError("Outbox is non-empty - We don't handle this yet")
 
