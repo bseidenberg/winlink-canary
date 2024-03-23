@@ -85,7 +85,7 @@ def load_config(args):
     global WINDOW_SIZE
     WINDOW_SIZE = int(config.get("health_window_size", 5))
 
-    # How many runs we look back at for determining health
+    # How long to wait between passes (O(hours) - we don't want to hog the channel)
     global NEXT_PASS_DELAY
     if args.next_pass_delay > 0:
         NEXT_PASS_DELAY = args.next_pass_delay
@@ -261,9 +261,6 @@ def run_loop_step():
     # Clean up
     clear_inbox()
 
-    # Throttle the loop
-    global NEXT_PASS_DELAY
-    sleep NEXT_PASS_DELAY
 
 '''
 Checks the health of a node. Returns True for healthy, False for unhealthy
@@ -306,7 +303,7 @@ def send_probe(node):
 
 def poll_for_probe(probe):
     sleep_int = FETCH_RETRY_INTERVAL
-    for _i in range(FETCH_RETRIES_COUNT):
+    for i in range(FETCH_RETRIES_COUNT):
         logging.info(f"Try {i+1} to fetch probe {probe.id}. Will sleep {sleep_int} seconds first...")
         # Sleep first to give the remote system time to handle the sent mail
         time.sleep(sleep_int)
@@ -402,10 +399,15 @@ if __name__ == "__main__":
     #dump_config()
     #sys.exit(0)
 
+    global NEXT_PASS_DELAY
     setup()
     if args.daemon:
         while True:
             run_loop_step()
+            time.sleep(NEXT_PASS_DELAY)
     else:
         for _count in range(int(args.count)):
             run_loop_step()
+            if i == args.count:
+                sys.exit(0)
+            time.sleep(NEXT_PASS_DELAY)

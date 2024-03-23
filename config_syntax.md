@@ -92,6 +92,17 @@ _Default:_ 5
 Note that you must have at least this many runs before a health state can be generated.
 
 
+### next_pass_delay
+**How long to wait between passes over a set nodes**
+_Type:_ Integer
+
+_Required:_ no
+
+_Default:_ 3600
+
+Its important that we don't hog the channel.  There is a tradeoff between minimizing channel use and detection time for broken nodes.  Should probably be O(hours).
+
+
 ### unhealthy_threshold
 ** We treat a node as unhealthy if it failed `unhealthy_threshold` probes out of the last `health_window_size` probes we did.
 
@@ -101,6 +112,22 @@ _Required:_ no
 
 _Default:_ 3
 
+
+### dedicated_mailbox
+** If the mailbox is dedicated to this function, we will be more cavalier with mailbox cleanup.
+
+_Type:_ Boolean
+
+_Required:_ no
+
+_Default:_ False
+
+__How to handle the outbox:__
+  - _True_: if the mailbox being used is dedicated to this funciton, then we can
+    assume anything we find in the outbox at the start of a pass is left over
+    from an aborted run, and remove it.
+  - _False_: if the mailbox being used is shared with a real user, then if we find
+    any mail there, be extra cautious and abort until the user clears the mail.
 
 
 ## Rig Control
