@@ -23,9 +23,6 @@
 # Current status: The script is currently in DRAFT status. While parts of it are tested, it is not yet ready for a
 # "first release"
 #  * Logging needs to be cleaned up - and we need to figure out how to handle our output, pat's output, etc.
-#  * It's currently way too aggressive. It sends a message, sleeps 30 seconds, then downloads it from the internet,
-#    then immediately moves to the next channel. The message send time is ~60s, so it's on-air ~66% of the time (and
-#    more TX than RX). This will hog the channels. We need to put in way more sleep.
 #  * There is currently no notification mechanism for failures. This will get written once the rest of everything is
 #    working.
 
