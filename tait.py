@@ -129,7 +129,7 @@ class Tait():
         self.ccr_set_rx_freq(freq)
         self.ccr_set_tx_freq(freq)
         #self.ccr_bandwidth(Tait.Bandwidth.WIDEBAND)
-        #self.ccr_power(Tait.PowerLevel.HIGH)
+        self.ccr_set_powerlevel(Tait.PowerLevel.MEDIUM)
     
     '''Set the RX frequency to freq, in hertz'''
     def ccr_set_rx_freq(self, freq):
@@ -218,11 +218,12 @@ class Tait():
 
     '''
     Send raw commands to the radio. Assumes the arg is a string (you must convert in advance).
-    
+
     At least one of the author's Tait radios has a nasty habit of not responding sometimes. So, we're going to do retries.
+
     '''    
     def send_tait_cmd(self, cmd, arg_str):
-        
+
         # Start with the cmd
         msg = str(cmd)
         assert len(msg) == 1
@@ -243,10 +244,10 @@ class Tait():
             ret = self.sp.read_until(b"\r")
 
             # The most common failure mode we've seen is on the SACS UHF Tait:
-            #  A command will be sent and we will not get any reply back. 
+            #  A command will be sent and we will not get any reply back.
             #  If we retry the command, we get a checksum error, but it will work on the third try.
             #  This probbaly indicates some sort of corruption on send (the newline doesn't make it through?)
-            #  or internal to the radio. 
+            #  or internal to the radio.
             # TODO FIXME: let's onlt retry on specific errors (eg, checksum errors) and pass the rest upstream
             if ret != b'' and (self.mode != self.Mode.CCR or str(ret).startswith("b'+")):
                 return ret
@@ -254,7 +255,7 @@ class Tait():
             time.sleep(i)
 
         raise InvalidStateError("The radio failed to respond after " + str(self.TAIT_WRITE_TRIES) + "tries.")
-    
+
     @staticmethod
     def checksum(cmd):
         total = 0
@@ -262,5 +263,3 @@ class Tait():
             total += ord(c)
         checksum = numpy.uint8(total)
         return format(~checksum+1, '02X') 
-    
-
