@@ -131,6 +131,7 @@ __How to handle the outbox:__
 
 
 ## Rig Control
+** Currently, only TAIT 8100 ("TAIT") is supported but the goal is to support HamLib library radios.**
 
 ### rig_port
 **Full pathname to rig control device**
