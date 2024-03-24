@@ -131,9 +131,35 @@ __How to handle the outbox:__
 
 
 ## Rig Control
-    "rig_port": "/dev/ttyACM0",
-    "rig_model": "RIG_MODEL_IC705",
 
+### rig_port
+**Full pathname to rig control device**
+
+_Type:_ String
+
+_Required:_ yes
+
+_Default:_ none
+
+### rig_port
+**Serial port speed for rig_port**
+
+_Type:_ Integer
+
+_Required:_ yes
+
+_Default:_ none
+
+This needs to be a supported speed, typically 9600.
+
+### rig_model
+**Name of the device as expected by HamLib or "TAIT"**
+
+_Type:_ String
+
+_Required:_ yes
+
+_Default:_ none
 
 ## Monitored Node Configuration
 
@@ -150,6 +176,7 @@ __How to handle the outbox:__
     "health_window_size": 5,
     "unhealthy_threshold": 3,
     "rig_port": "/dev/ttyACM0",
+    "rig_port_speed": "9600",
     "rig_model": "RIG_MODEL_IC705",
     "nodes": [
         {"name": "Beacon Hill #1", "frequency": 430.800, "peer": "W7ACS-10"},
