@@ -33,6 +33,7 @@ import os
 import pprint
 import re
 import sys
+import syslog
 import time
 import uuid
 from collections import namedtuple, deque
@@ -82,6 +83,9 @@ def load_config(args):
 
     # How many of the last ${WINDOW_SIZE} runs that failed we treat as unhealthy.
     CONFIG['unhealthy_threshold'] = int(config_json.get("unhealthy_threshold", 3))
+
+    # Whether to use syslog
+    CONFIG['syslog_enabled'] = str2bool(config_json.get("syslog_enabled", 'False'))
 
     # DEDICATED_MAILBOX (True/False)
     # How to handle the outbox
@@ -208,6 +212,10 @@ def setup(args):
         RIG = Hamlib.Rig(rig_model=CONFIG['rig_model'])
         RIG.set_conf("rig_pathname", CONFIG['rig_port_path'])
 
+    # Open syslog, if enabled
+    if CONFIG['syslog_enabled']:
+        syslog.openlog(ident="winlink_monitor")
+        syslog.syslog("winlink_monitor running")
 
 def run_loop_step():
     '''Check the health of each node.
@@ -329,7 +337,7 @@ def find_all_ids():
 def calculate_health_state():
     state = {}
     for (node, history) in PROBE_HISTORY.items():
-        logging.info('Probe History for %s\t%s', node.name, history_string(history))
+        logging.info('Probe History for %s (%s)\t%s', node.name, node.peer, history_string(history))
         if len(history) < CONFIG['health_window_size']:
             state[node] = 'PENDING'
             continue
@@ -353,7 +361,10 @@ def history_string(history):
 def diff_and_report_health_state(old, new):
     for (node, health) in new.items():
         if old[node] != health:
-            logging.warning('STATE CHANGE: %s transitioned %s -> %s', node.name, old[node], health)
+            logging.warning('STATE CHANGE: %s (%s) transitioned %s -> %s', node.name, node.peer, old[node], health)
+            if (CONFIG['syslog_enabled']):
+                syslog.syslog('STATE CHANGE: %s (%s) transitioned %s -> %s' % (node.name, node.peer, old[node], health))
+
 
 
 def clear_inbox():

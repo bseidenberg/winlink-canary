@@ -164,6 +164,19 @@ _Default:_ none
 
 ## Monitored Node Configuration
 
+## Reporting
+### Syslog Enabled
+**Whether to log node health information (only) to syslog**
+
+_Type_: Boolean
+
+_Required:_ no
+
+_Default:_ False
+
+
+
+
 # Sample Configuration
 ```
 {
