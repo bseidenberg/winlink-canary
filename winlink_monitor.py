@@ -34,10 +34,13 @@ import pprint
 import re
 import sys
 import syslog
+import threading
 import time
 import uuid
 from collections import namedtuple, deque
 from subprocess import run, CalledProcessError
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 import Hamlib
 from tait import Tait
 
@@ -49,6 +52,7 @@ env = os.environ.copy()
 env['FW_AUX_ONLY_EXPERIMENT']="1"
 
 CONFIG = {}
+STATUS = { 'mode': 'starting' }
 
 #  Map of node -> fixed size queue (ring buffer) containing 0 (healthy) or 1 (unhealthy) for each probe
 PROBE_HISTORY = {}
@@ -57,7 +61,6 @@ HEALTH_STATE = {}
 
 def str2bool(arg):
     return arg.lower() in ['true', '1', 't', 'y', 'yes']
-
 
 def load_config(args):
     '''Parse config file and do some config syntax and sanity checking.
@@ -229,7 +232,9 @@ def run_loop_step():
        Determines which nodes changed states in this pass, and reports the change
     '''
 
+    STATUS['mode'] = 'polling'
     for node in CONFIG['nodes']:
+        STATUS['mode'] = f'polling {node.name}'
         success = check_health(node)
         if success:
             PROBE_HISTORY[node].append(0)
@@ -348,6 +353,17 @@ def calculate_health_state():
             state[node] = 'HEALTHY'
     return state
 
+def health_state_dicts():
+    states = []
+    for (node, history) in PROBE_HISTORY.items():
+        state = {}
+        state['name'] = node.name
+        state['peer'] = node.peer
+        state['state'] = HEALTH_STATE[node]
+        state['history'] = history_string(PROBE_HISTORY[node])
+        states.append(state)
+    return states
+
 def history_string(history):
     ret = ""
     for item in history:
@@ -366,19 +382,60 @@ def diff_and_report_health_state(old, new):
                 syslog.syslog('STATE CHANGE: %s (%s) transitioned %s -> %s' % (node.name, node.peer, old[node], health))
 
 
-
 def clear_inbox():
     # No .check_returncode because we may not have any (on failure)
-    run(f"rm {CONFIG['mailbox_base']}/in/*", shell=True, check=False)
+    run(f"rm -f {CONFIG['mailbox_base']}/in/*", shell=True, check=False)
 
 def clear_outbox():
     # No .check_returncode because we may not have any
-    run(f"rm {CONFIG['mailbox_base']}/out/*", shell=True, check=False)
+    run(f"rm -f {CONFIG['mailbox_base']}/out/*", shell=True, check=False)
 
 def assert_outbox_empty():
     '''Assert the outbox is empty.'''
     if len(os.listdir(CONFIG['mailbox_base'] + "/out")) > 0:
         raise RuntimeError("Outbox is non-empty - We don't handle this yet")
+
+def canary_status():
+    if STATUS['mode'] == 'sleeping':
+        STATUS['time_left'] = STATUS['sleep_start_time'] + CONFIG['next_pass_delay'] - time.time()
+    else:
+        STATUS['time_left'] = 0
+    return {'status': STATUS, 'health': health_state_dicts() }
+
+
+# Webserver to handle status requests
+
+class Handler(BaseHTTPRequestHandler):
+    
+    def do_GET(self):
+        if self.path == "/status":
+            response = f'{json.dumps(canary_status(), indent=4)}\n'
+        elif self.path == "/config":
+            response = f'{json.dumps(CONFIG, indent=4)}\n'
+        else:
+            response = 'Help:\n/status - for current status of nodes\n/config - for configuration\n'
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(bytes(str(response), 'utf-8'))
+
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    """Handle requests in a separate thread."""
+    pass
+
+def create_httpserver():
+    # TODO(dpk): parameterize the web server
+    server = ThreadedHTTPServer(('localhost', 8080), Handler)
+    #if USE_HTTPS:
+    #    import ssl
+    #    server.socket = ssl.wrap_socket(server.socket, keyfile='./key.pem', certfile='./cert.pem', server_side=True)
+    server.serve_forever()
+
+def sleep_between_passes():
+    STATUS['mode'] = 'sleeping'
+    STATUS['sleep_start_time'] = time.time()
+    logging.info(f"sleeping for {CONFIG['next_pass_delay']} seconds...")
+    time.sleep(CONFIG['next_pass_delay'])
 
 
 # MAIN
@@ -394,16 +451,17 @@ if __name__ == "__main__":
     parser.add_argument('nodes', nargs='*', help='specific systems to test (either name or peer call)', default=[])
     args = parser.parse_args()
 
+    STATUS['start_time'] = time.time()
     load_config(args)
+    threading.Thread(target=create_httpserver).start()
 
     setup(args)
     if args.daemon:
         while True:
             run_loop_step()
-            time.sleep(CONFIG['next_pass_delay'])
+            sleep_between_passes()
     else:
         for count in range(int(args.count)):
             run_loop_step()
-            if count == args.count - 1:
-                sys.exit(0)
-            time.sleep(CONFIG['next_pass_delay'])
+            if count < args.count - 1:
+                sleep_between_passes()
