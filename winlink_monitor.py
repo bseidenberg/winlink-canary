@@ -32,15 +32,16 @@ import logging
 import os
 import pprint
 import re
+import ssl
 import sys
 import syslog
 import threading
 import time
 import uuid
 from collections import namedtuple, deque
-from subprocess import run, CalledProcessError
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
+from subprocess import run, CalledProcessError
 import Hamlib
 from tait import Tait
 
@@ -56,7 +57,10 @@ STATUS = { 'mode': 'starting' }
 
 #  Map of node -> fixed size queue (ring buffer) containing 0 (healthy) or 1 (unhealthy) for each probe
 PROBE_HISTORY = {}
+#  Map of node -> current state of the node
 HEALTH_STATE = {}
+#  Map of node -> the timestamp of the last healthy check of the node
+LAST_HEALTHY = {}
 
 
 def str2bool(arg):
@@ -164,16 +168,28 @@ def load_config(args):
         sys.stderr.write(f"ERROR: Could not find model {model_str} in Hamlib. See documentation for help.\n")
         sys.exit(1)
 
-
-    # Nodes
-    # TODO: This is tricky - add better error messaging
+    # Build the list of Nodes
     CONFIG['nodes'] = []
     for nodeobj in config_json.get("nodes", []):
         node = Node(nodeobj["name"], nodeobj["frequency"], nodeobj["peer"])
+        # The config file specifies a list of nodes with supporting information
+        # (frequency and peer). We provide an option to limit the polling to a subset
+        # of that list by specifying either the human friendly name or the peer id.
+        #
         if args.nodes:
+            # Skip this node if we can't find it in our list by name or peer id.
             if node.name not in args.nodes and node.peer not in args.nodes:
                 continue
         CONFIG['nodes'].append(node)
+        LAST_HEALTHY[node] = 0
+
+    # HTTP server parameters
+    CONFIG['http_address'] = config_json.get('http_address', '127.0.0.1')
+    CONFIG['http_port'] = int(config_json.get('http_port', 8080))
+    # Use of HTTPS is optional.  The server will only support one of the protocols at a time.
+    CONFIG['use_https'] = str2bool(config_json.get("use_https", 'False'))
+    CONFIG['https_key_file'] = config_json.get('https_key_file', './key.pem')
+    CONFIG['https_cert_file'] = config_json.get('https_cert_file', './cert.pem')
 
     if args.verbose:
         print('config:')
@@ -232,12 +248,12 @@ def run_loop_step():
        Determines which nodes changed states in this pass, and reports the change
     '''
 
-    STATUS['mode'] = 'polling'
     for node in CONFIG['nodes']:
         STATUS['mode'] = f'polling {node.name}'
         success = check_health(node)
         if success:
             PROBE_HISTORY[node].append(0)
+            LAST_HEALTHY[node] = time.time()
         else:
             PROBE_HISTORY[node].append(1)
 
@@ -360,7 +376,8 @@ def health_state_dicts():
         state['name'] = node.name
         state['peer'] = node.peer
         state['state'] = HEALTH_STATE[node]
-        state['history'] = history_string(PROBE_HISTORY[node])
+        state['history'] = history_string(history)
+        state['last_healthy'] = LAST_HEALTHY[node]
         states.append(state)
     return states
 
@@ -378,7 +395,7 @@ def diff_and_report_health_state(old, new):
     for (node, health) in new.items():
         if old[node] != health:
             logging.warning('STATE CHANGE: %s (%s) transitioned %s -> %s', node.name, node.peer, old[node], health)
-            if (CONFIG['syslog_enabled']):
+            if CONFIG['syslog_enabled']:
                 syslog.syslog('STATE CHANGE: %s (%s) transitioned %s -> %s' % (node.name, node.peer, old[node], health))
 
 
@@ -406,7 +423,7 @@ def canary_status():
 # Webserver to handle status requests
 
 class Handler(BaseHTTPRequestHandler):
-    
+
     def do_GET(self):
         if self.path == "/status":
             response = f'{json.dumps(canary_status(), indent=4)}\n'
@@ -421,14 +438,11 @@ class Handler(BaseHTTPRequestHandler):
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     """Handle requests in a separate thread."""
-    pass
 
 def create_httpserver():
-    # TODO(dpk): parameterize the web server
-    server = ThreadedHTTPServer(('localhost', 8080), Handler)
-    #if USE_HTTPS:
-    #    import ssl
-    #    server.socket = ssl.wrap_socket(server.socket, keyfile='./key.pem', certfile='./cert.pem', server_side=True)
+    server = ThreadedHTTPServer((CONFIG['http_address'], CONFIG['http_port']), Handler)
+    if CONFIG['use_https']:
+        server.socket = ssl.wrap_socket(server.socket, keyfile='./key.pem', certfile='./cert.pem', server_side=True)
     server.serve_forever()
 
 def sleep_between_passes():
@@ -440,7 +454,7 @@ def sleep_between_passes():
 
 # MAIN
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--daemon', help='deamon mode (run continuously)', default=False, action='store_true')
     parser.add_argument('-c', '--count', help='number of passes to run', default='10', type=int)
@@ -465,3 +479,6 @@ if __name__ == "__main__":
             run_loop_step()
             if count < args.count - 1:
                 sleep_between_passes()
+
+if __name__ == "__main__":
+    main()
