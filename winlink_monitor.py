@@ -448,8 +448,10 @@ def create_httpserver():
 def sleep_between_passes():
     STATUS['mode'] = 'sleeping'
     STATUS['sleep_start_time'] = time.time()
+    STATUS['next_pass_delay'] = CONFIG['next_pass_delay']
     logging.info(f"sleeping for {CONFIG['next_pass_delay']} seconds...")
     time.sleep(CONFIG['next_pass_delay'])
+    STATUS['sleep_start_time'] = 0
 
 
 # MAIN
@@ -467,7 +469,7 @@ def main():
 
     STATUS['start_time'] = time.time()
     load_config(args)
-    threading.Thread(target=create_httpserver).start()
+    threading.Thread(target=create_httpserver, daemon=True).start()
 
     setup(args)
     if args.daemon:
