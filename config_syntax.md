@@ -164,8 +164,8 @@ _Default:_ none
 
 ## Monitored Node Configuration
 
-## Reporting
-### Syslog Enabled
+## Reporting and Monitoring
+### syslog_enabled
 **Whether to log node health information (only) to syslog**
 
 _Type_: Boolean
@@ -174,15 +174,74 @@ _Required:_ no
 
 _Default:_ False
 
+A webserver is provided principally to allow polling of the winlink_monitor for its
+current status and the status of the monitored nodes.  The output is formatted json and
+intended for easy parsing by other programs or administrators tracking issues.  The use
+of HTTPS instead of HTTP is optional and the server will only support one of the protocols at a time.
+If using HTTPS, the server will look for a certificate file and key file in the current directory
+by default, but these can be changed with the relevant parameters below.
 
+### http_address
+**The address to listen on for new web connections
 
+_Type:_ String
+
+_Required:_ no
+
+_Default:_ 127.0.0.1
+
+### http_port
+**The port to listen on for new web connections
+
+_Type:_ Integer
+
+_Required:_ no
+
+_Default:_ 8080
+
+### use_https
+**Force the use of SSL (https) for web connections
+
+_Type:_ Boolean
+
+_Required:_ no
+
+_Default:_ False
+
+### https_key_file
+**If using HTTPS, this specifies where the private key file is located
+
+_Type:_ String
+
+_Required:_ no
+
+_Default:_ ./key.pem
+
+### https_cert_file
+**If using HTTPS, this specifies where the certificate file is located
+_Type:_ String
+
+_Required:_ no
+
+_Default:_ ./cert.pem
 
 # Sample Configuration
+
+The options are discussed above.  **nodes** is a list of dictionaries that specify
+the Winlink gateway's to be monitored.  The information includes:
+ - name - human friendly name for the node
+ - frequency - the frequency in megahertz of the winlink gateway
+ - peer - the ssid of the winlink gateway
+
+
 ```
 {
     "our_call": "WY2K",
     "sender": "ACS-WL",
+    "pat_call": "W7ACS-1",
+    "rx_aux_call": "ACS-WLCPWT",
     "mailbox_base_path": "/home/astronut/.local/share/pat/mailbox/",
+    #"dedicated_mailbox": "True",
     "pat_bin_path": "/usr/bin/pat",
     "fetch_sleep_seconds": 2,
     "fetch_retry_interval_seconds": 30,
@@ -192,13 +251,19 @@ _Default:_ False
     "rig_port": "/dev/ttyACM0",
     "rig_port_speed": "9600",
     "rig_model": "RIG_MODEL_IC705",
+    # Example for TAIT
+    #"rig_port": "/dev/ttyUSB_TAIT_UHF",
+    #"rig_port_speed": "9600",
+    #"rig_model": "TAIT",
+    "syslog_enabled", "True",
     "nodes": [
-        {"name": "Beacon Hill #1", "frequency": 430.800, "peer": "W7ACS-10"},
-        {"name": "Beacon Hill #2", "frequency": 439.800, "peer": "W7ACS-10"},
-        {"name": "Capitol Hill #1", "frequency": 430.950, "peer": "W7ACS-10"},
-        {"name": "Capitol Hill #2", "frequency": 439.950, "peer":"W7ACS-10"},
-        {"name": "Magnolia", "frequency": 430.875, "peer":"W7ACS-10"},
-        {"name": "Northwest","frequency": 431.000, "peer":"W7ACS-10"}
-    ]
+        {"name": "Beacon Hill #1",  "frequency": 430.800, "peer": "W7ACS-10"},
+        {"name": "Beacon Hill #2",  "frequency": 439.800, "peer": "W7ACS-11"},
+        {"name": "First Hill #1",   "frequency": 430.850, "peer": "W7ACS-12"},
+        {"name": "First Hill #2",   "frequency": 440.850, "peer": "W7ACS-13"},
+        {"name": "Capitol Park #1", "frequency": 430.950, "peer": "W7ACS-14"},
+        {"name": "Capitol Park #2", "frequency": 439.950, "peer": "W7ACS-15"},
+        {"name": "Magnolia", "frequency": 430.875, "peer":"W7ACS-9"}
+    ],
 }
 ```

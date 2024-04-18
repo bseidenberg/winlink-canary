@@ -32,11 +32,15 @@ import logging
 import os
 import pprint
 import re
+import ssl
 import sys
 import syslog
+import threading
 import time
 import uuid
 from collections import namedtuple, deque
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 from subprocess import run, CalledProcessError
 import Hamlib
 from tait import Tait
@@ -49,15 +53,18 @@ env = os.environ.copy()
 env['FW_AUX_ONLY_EXPERIMENT']="1"
 
 CONFIG = {}
+STATUS = { 'mode': 'starting' }
 
 #  Map of node -> fixed size queue (ring buffer) containing 0 (healthy) or 1 (unhealthy) for each probe
 PROBE_HISTORY = {}
+#  Map of node -> current state of the node
 HEALTH_STATE = {}
+#  Map of node -> the timestamp of the last healthy check of the node
+LAST_HEALTHY = {}
 
 
 def str2bool(arg):
     return arg.lower() in ['true', '1', 't', 'y', 'yes']
-
 
 def load_config(args):
     '''Parse config file and do some config syntax and sanity checking.
@@ -161,16 +168,28 @@ def load_config(args):
         sys.stderr.write(f"ERROR: Could not find model {model_str} in Hamlib. See documentation for help.\n")
         sys.exit(1)
 
-
-    # Nodes
-    # TODO: This is tricky - add better error messaging
+    # Build the list of Nodes
     CONFIG['nodes'] = []
     for nodeobj in config_json.get("nodes", []):
         node = Node(nodeobj["name"], nodeobj["frequency"], nodeobj["peer"])
+        # The config file specifies a list of nodes with supporting information
+        # (frequency and peer). We provide an option to limit the polling to a subset
+        # of that list by specifying either the human friendly name or the peer id.
+        #
         if args.nodes:
+            # Skip this node if we can't find it in our list by name or peer id.
             if node.name not in args.nodes and node.peer not in args.nodes:
                 continue
         CONFIG['nodes'].append(node)
+        LAST_HEALTHY[node] = 0
+
+    # HTTP server parameters
+    CONFIG['http_address'] = config_json.get('http_address', '127.0.0.1')
+    CONFIG['http_port'] = int(config_json.get('http_port', 8080))
+    # Use of HTTPS is optional.  The server will only support one of the protocols at a time.
+    CONFIG['use_https'] = str2bool(config_json.get("use_https", 'False'))
+    CONFIG['https_key_file'] = config_json.get('https_key_file', './key.pem')
+    CONFIG['https_cert_file'] = config_json.get('https_cert_file', './cert.pem')
 
     if args.verbose:
         print('config:')
@@ -230,9 +249,11 @@ def run_loop_step():
     '''
 
     for node in CONFIG['nodes']:
+        STATUS['mode'] = f'polling {node.name}'
         success = check_health(node)
         if success:
             PROBE_HISTORY[node].append(0)
+            LAST_HEALTHY[node] = time.time()
         else:
             PROBE_HISTORY[node].append(1)
 
@@ -351,6 +372,18 @@ def calculate_health_state():
             state[node] = 'HEALTHY'
     return state
 
+def health_state_dicts():
+    states = []
+    for (node, history) in PROBE_HISTORY.items():
+        state = {}
+        state['name'] = node.name
+        state['peer'] = node.peer
+        state['state'] = HEALTH_STATE[node]
+        state['history'] = history_string(history)
+        state['last_healthy'] = LAST_HEALTHY[node]
+        states.append(state)
+    return states
+
 def history_string(history):
     ret = ""
     for item in history:
@@ -365,28 +398,68 @@ def diff_and_report_health_state(old, new):
     for (node, health) in new.items():
         if old[node] != health:
             logging.warning('STATE CHANGE: %s (%s) transitioned %s -> %s', node.name, node.peer, old[node], health)
-            if (CONFIG['syslog_enabled']):
+            if CONFIG['syslog_enabled']:
                 syslog.syslog('STATE CHANGE: %s (%s) transitioned %s -> %s' % (node.name, node.peer, old[node], health))
-
 
 
 def clear_inbox():
     # No .check_returncode because we may not have any (on failure)
-    run(f"rm {CONFIG['mailbox_base']}/in/*", shell=True, check=False)
+    run(f"rm -f {CONFIG['mailbox_base']}/in/*", shell=True, check=False)
 
 def clear_outbox():
     # No .check_returncode because we may not have any
-    run(f"rm {CONFIG['mailbox_base']}/out/*", shell=True, check=False)
+    run(f"rm -f {CONFIG['mailbox_base']}/out/*", shell=True, check=False)
 
 def assert_outbox_empty():
     '''Assert the outbox is empty.'''
     if len(os.listdir(CONFIG['mailbox_base'] + "/out")) > 0:
         raise RuntimeError("Outbox is non-empty - We don't handle this yet")
 
+def canary_status():
+    if STATUS['mode'] == 'sleeping':
+        STATUS['time_left'] = STATUS['sleep_start_time'] + CONFIG['next_pass_delay'] - time.time()
+    else:
+        STATUS['time_left'] = 0
+    return {'status': STATUS, 'health': health_state_dicts() }
+
+
+# Webserver to handle status requests
+
+class Handler(BaseHTTPRequestHandler):
+
+    def do_GET(self):
+        if self.path == "/status":
+            response = f'{json.dumps(canary_status(), indent=4)}\n'
+        elif self.path == "/config":
+            response = f'{json.dumps(CONFIG, indent=4)}\n'
+        else:
+            response = 'Help:\n/status - for current status of nodes\n/config - for configuration\n'
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(bytes(str(response), 'utf-8'))
+
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    """Handle requests in a separate thread."""
+
+def create_httpserver():
+    server = ThreadedHTTPServer((CONFIG['http_address'], CONFIG['http_port']), Handler)
+    if CONFIG['use_https']:
+        server.socket = ssl.wrap_socket(server.socket, keyfile='./key.pem', certfile='./cert.pem', server_side=True)
+    server.serve_forever()
+
+def sleep_between_passes():
+    STATUS['mode'] = 'sleeping'
+    STATUS['sleep_start_time'] = time.time()
+    STATUS['next_pass_delay'] = CONFIG['next_pass_delay']
+    logging.info(f"sleeping for {CONFIG['next_pass_delay']} seconds...")
+    time.sleep(CONFIG['next_pass_delay'])
+    STATUS['sleep_start_time'] = 0
+
 
 # MAIN
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--daemon', help='deamon mode (run continuously)', default=False, action='store_true')
     parser.add_argument('-c', '--count', help='number of passes to run', default='10', type=int)
@@ -397,16 +470,20 @@ if __name__ == "__main__":
     parser.add_argument('nodes', nargs='*', help='specific systems to test (either name or peer call)', default=[])
     args = parser.parse_args()
 
+    STATUS['start_time'] = time.time()
     load_config(args)
+    threading.Thread(target=create_httpserver, daemon=True).start()
 
     setup(args)
     if args.daemon:
         while True:
             run_loop_step()
-            time.sleep(CONFIG['next_pass_delay'])
+            sleep_between_passes()
     else:
         for count in range(int(args.count)):
             run_loop_step()
-            if count == args.count - 1:
-                sys.exit(0)
-            time.sleep(CONFIG['next_pass_delay'])
+            if count < args.count - 1:
+                sleep_between_passes()
+
+if __name__ == "__main__":
+    main()
