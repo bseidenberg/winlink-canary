@@ -299,13 +299,16 @@ def poll_for_probe(probe):
         # Sleep first to give the remote system time to handle the sent mail
         time.sleep(sleep_int)
 
-        # Fetch pending mail
-        rxd_probe_ids = fetch_all()
-
-        # Check for our probe
-        if probe.id in rxd_probe_ids:
-            logging.info("Probe found!")
-            return True
+        try:
+            # Fetch pending mail
+            rxd_probe_ids = fetch_all()
+        except (CalledProcessError) as e:
+            logging.error(f'Probe failure: {e}')
+        else:
+            # Check for our probe
+            if probe.id in rxd_probe_ids:
+                logging.info("Probe found!")
+                return True
 
         # Exponential Backoff
         logging.info("Probe not found, sleeping...")
