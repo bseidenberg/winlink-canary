@@ -174,6 +174,13 @@ _Required:_ no
 
 _Default:_ False
 
+A webserver is provided principally to allow polling of the winlink_monitor for its
+current status and the status of the monitored nodes.  The output is formatted json and
+intended for easy parsing by other programs or administrators tracking issues.  The use
+of HTTPS instead of HTTP is optional and the server will only support one of the protocols at a time.
+If using HTTPS, the server will look for a certificate file and key file in the current directory
+by default, but these can be changed with the relevant parameters below.
+
 ### http_address
 **The address to listen on for new web connections
 
@@ -193,7 +200,7 @@ _Required:_ no
 _Default:_ 8080
 
 ### use_https
-**The port to listen on for new web connections
+**Force the use of SSL (https) for web connections
 
 _Type:_ Boolean
 
@@ -210,20 +217,13 @@ _Required:_ no
 
 _Default:_ ./key.pem
 
-### https_key_file
+### https_cert_file
 **If using HTTPS, this specifies where the certificate file is located
-
 _Type:_ String
 
 _Required:_ no
 
 _Default:_ ./cert.pem
-
-The webserver is provided principally to allow polling of the winlink_monitor for its
-current status and the status of the monitored nodes.  The output is formatted json and
-intended for easy parsing by other programs or administrators tracking issues.  The use
-of HTTPS instead of HTTP is optional and the server will only support one of the protocols at a time.
-
 
 # Sample Configuration
 
