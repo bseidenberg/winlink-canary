@@ -252,9 +252,9 @@ class Tait():
             if ret != b'' and (self.mode != self.Mode.CCR or str(ret).startswith("b'+")):
                 return ret
             #print("DEBUG: bad response '"+ str(ret) + "', retrying")
-            time.sleep(i)
+            time.sleep(2)
 
-        raise InvalidStateError("The radio failed to respond after " + str(self.TAIT_WRITE_TRIES) + "tries.")
+        raise InvalidStateError("The radio failed to respond after " + str(self.TAIT_WRITE_TRIES) + " tries.")
 
     @staticmethod
     def checksum(cmd):
