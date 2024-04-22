@@ -1,6 +1,3 @@
-# IMPORTANT NOTE
-## This branch is intended for use on the ACS canary nodes. Development happens on the main branch
-
 # Winlink/VARA node monitor
 
 This program is designed to act as a canary (health monitor) for the SeattleACS Winlink/VARA nodes. 
