@@ -3,8 +3,10 @@
     "pat_call": "W7ACS-1",
     "rx_aux_call": "ACS-WLCPWT",
     "rig_port": "/dev/ttyUSB_TAIT_UHF",
+    "rig_port_speed": "9600",
     "rig_model": "TAIT",
-    "syslog_enable": "True",
+    "syslog_enabled": "True",
+    "dedicated_mailbox": "True",
     "nodes": [
         {"name": "Beacon Hill #1",  "frequency": 430.800, "peer": "W7ACS-10"},
         {"name": "Beacon Hill #2",  "frequency": 439.800, "peer": "W7ACS-11"},
