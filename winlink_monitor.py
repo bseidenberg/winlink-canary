@@ -1,3 +1,5 @@
+#!/usr/bin/python3
+#
 # Winlink/VARA node monitor
 #
 # This program is designed to act as a canary (health monitor) for the SeattleACS Winlink/VARA nodes.
@@ -39,6 +41,7 @@ import threading
 import time
 import uuid
 from collections import namedtuple, deque
+from enum import Enum
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from subprocess import run, CalledProcessError
@@ -61,6 +64,13 @@ PROBE_HISTORY = {}
 HEALTH_STATE = {}
 #  Map of node -> the timestamp of the last healthy check of the node
 LAST_HEALTHY = {}
+
+
+# Return from check_health()
+class Health(Enum):
+    HEALTHY = 1
+    UNHEALTHY = 2
+    UNKNOWN = 3
 
 
 def str2bool(arg):
@@ -236,6 +246,7 @@ def setup(args):
         syslog.openlog(ident="winlink_monitor")
         syslog.syslog("winlink_monitor running")
 
+
 def run_loop_step():
     '''Check the health of each node.
        Append healty to the node's circular buffer of health status
@@ -250,11 +261,14 @@ def run_loop_step():
 
     for node in CONFIG['nodes']:
         STATUS['mode'] = f'polling {node.name}'
-        success = check_health(node)
-        if success:
+        ret = check_health(node)
+
+        # We explictly ignore return health of UNKNOWN. This indicates our probe failed locally
+        # and we learned nothing about the remote health. Ignore this pass and try again later.
+        if ret == Health.HEALTHY:
             PROBE_HISTORY[node].append(0)
             LAST_HEALTHY[node] = time.time()
-        else:
+        elif ret == Health.UNHEALTHY:
             PROBE_HISTORY[node].append(1)
 
     # Calculate the new health state
@@ -271,6 +285,10 @@ def run_loop_step():
     clear_inbox()
 
 
+class LocalRigError(Exception):
+    '''Raise when there is a local radio error unrelated to the remote site.'''
+    pass
+
 def check_health(node):
     '''
     Checks the health of a node.
@@ -285,11 +303,16 @@ def check_health(node):
     try:
         pending_probe = send_probe(node)
         assert_outbox_empty()
+    except LocalRigError:
+        logging.error('Failed to transmit probe to node %s (local error)', node.name)
+        # Cleanup non-empty outbox
+        clear_outbox()
+        return Health.UNKNOWN
     except (RuntimeError, CalledProcessError):
         logging.error('Failed to transmit probe to node %s!', node.name)
         # Cleanup non-empty outbox
         clear_outbox()
-        return False
+        return Health.UNHEALTHY
 
     return poll_for_probe(pending_probe)
 
@@ -303,9 +326,13 @@ def send_probe(node):
     logging.info('Composed. Changing frequency to %s.', node.frequency)
     # Change frequency - we open and close the RIG handle to avoid fighting with VARA on the serial port
     # if it's being used for PTT (ex: IC-705). Doesn't matter for a DRA/Signalink.
-    RIG.open()
-    RIG.set_freq(Hamlib.RIG_VFO_CURR, int(node.frequency * 1e6))
-    RIG.close()
+    try:
+        RIG.open()
+        RIG.set_freq(Hamlib.RIG_VFO_CURR, int(node.frequency * 1e6))
+        RIG.close()
+    except RuntimeError as e:
+        # If the error is while setting the frequency, don't blame the remote node.  Just retry next cycle.
+        raise LocalRigError from e
     run([CONFIG['pat'], '-s', 'connect', f'varafm:///{node.peer}'], env=env, check=True)
 
     logging.info('Sent!')
@@ -329,14 +356,14 @@ def poll_for_probe(probe):
             # Check for our probe
             if probe.id in rxd_probe_ids:
                 logging.info("Probe found!")
-                return True
+                return Health.HEALTHY
 
         # Exponential Backoff
         logging.info("Probe not found, sleeping...")
         sleep_int = 2*sleep_int
 
     logging.warning('Giving up on probe %s', probe.id)
-    return False
+    return Health.UNHEALTHY
 
 def fetch_all():
     download_mail_via_telnet()
@@ -445,14 +472,17 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 def create_httpserver():
     server = ThreadedHTTPServer((CONFIG['http_address'], CONFIG['http_port']), Handler)
     if CONFIG['use_https']:
-        server.socket = ssl.wrap_socket(server.socket, keyfile='./key.pem', certfile='./cert.pem', server_side=True)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)  # Create SSL context
+        context.load_cert_chain(certfile='./cert.pem', keyfile='./key.pem')  # Load cert and key
+        server.socket = context.wrap_socket(server.socket, server_side=True)  # Wrap the socket
+
     server.serve_forever()
 
 def sleep_between_passes():
     STATUS['mode'] = 'sleeping'
     STATUS['sleep_start_time'] = time.time()
     STATUS['next_pass_delay'] = CONFIG['next_pass_delay']
-    logging.info(f"sleeping for {CONFIG['next_pass_delay']} seconds...")
+    logging.info("sleeping for %s seconds...", {CONFIG['next_pass_delay']})
     time.sleep(CONFIG['next_pass_delay'])
     STATUS['sleep_start_time'] = 0
 
