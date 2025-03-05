@@ -321,7 +321,7 @@ def send_probe(node):
     probe = Probe(str(uuid.uuid4()), time.time())
 
     logging.info('Composing %s to %s at %s', probe.id, node.name, probe.timestamp)
-    body = f"Message to {node.name} on {node.frequency} at {probe.timestamp}".encode()
+    body = f"Canary message sent to {node.name} on {node.frequency} at {probe.timestamp}".encode()
     run([CONFIG['pat'], 'compose', '-s', probe.id, CONFIG['rx_aux_callsign'], '-r', CONFIG['sender']], input=body, env=env, check=True)
     logging.info('Composed. Changing frequency to %s.', node.frequency)
     # Change frequency - we open and close the RIG handle to avoid fighting with VARA on the serial port

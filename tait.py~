@@ -230,19 +230,6 @@ class Tait():
 
 
     '''
-    Query radio with Query Radio Pulse (manual 7.8.15). Radio will respond QssPCC if the radio has
-    a minimum configuration (having received a 'set receive frequency', or QssDCC if the radio is
-    still at its default (startup) configuration.
-    '''
-    def ccr_query_radio_pulse(self):
-        ret = self.send_tait_cmd("Q", "P")
-        # Make sure we have an ack
-        if not ret.startswith(b"+"):
-            raise InvalidStateError("The radio returned an error on Pulse query: " + str(ret))
-
-
-
-    '''
     Send raw commands to the radio. Assumes the arg is a string (you must convert in advance).
 
     At least one of the author's Tait radios has a nasty habit of not responding sometimes. So, we're going to do retries.
