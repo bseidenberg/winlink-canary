@@ -139,10 +139,11 @@ class Tait():
 
     '''Short-cut to tune the radio to a given simplex freq'''
     def tune_radio(self, freq):
+        self.mode = Tait.Mode.UNKNOWN
         self.ccr_set_rx_freq(freq)
         self.ccr_set_tx_freq(freq)
         #self.ccr_bandwidth(Tait.Bandwidth.WIDEBAND)
-        self.ccr_set_powerlevel(Tait.PowerLevel.MEDIUM)
+        self.ccr_set_powerlevel(Tait.PowerLevel.LOW)
     
     '''Set the RX frequency to freq, in hertz'''
     def ccr_set_rx_freq(self, freq):
@@ -268,8 +269,8 @@ class Tait():
             if self.sp.in_waiting:
                 nchars = self.sp.in_waiting
                 logging.debug(f"send_tait_cmd(): pending input ({nchars} chars)!")
-                #ret = self.sp.read(size=nchars)
-                #logging.debug(f"send_tait_cmd(): pending input was '{str(ret)}'")
+                ret = self.sp.read(size=nchars)
+                logging.debug(f"send_tait_cmd(): pending input was '{str(ret)}'")
             # Send
             self.sp.write(bytes(msg, "utf-8"))
             # Return the response back to the caller
@@ -286,6 +287,13 @@ class Tait():
                     logging.debug(f"send_tait_cmd(): succeeded after {i} retries")
                 logging.debug(f"send_tait_cmd(): returning '{str(ret)}'")
                 return ret
+            if self.mode == self.Mode.CCR and str(ret).startswith("b'.m08"):
+                # This is a sign we are in CDDI mode when we want to be in CCR mode. 
+                logging.debug(f"send_tait_cmd(): CDDI mode detected, unsolicited message '{str(ret)}'")
+                # drain any other pending data and retry
+                ret = self.sp.read_until(b"\r")
+                logging.debug(f"send_tait_cmd(): drained '{str(ret)}'")
+                raise InvalidStateError(f"The radio is in CDDI mode instead of CCR mode.")
             logging.debug(f"send_tait_cmd(): bad response '{str(ret)}', retrying")
             self.retries += 1
             self.sp.reset_input_buffer()

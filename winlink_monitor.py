@@ -32,7 +32,6 @@ import argparse
 import json
 import logging
 import os
-import pprint
 import re
 import ssl
 import sys
@@ -40,6 +39,7 @@ import syslog
 import threading
 import time
 import uuid
+from asyncio import InvalidStateError
 from collections import namedtuple, deque
 from enum import Enum
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -56,7 +56,7 @@ env = os.environ.copy()
 env['FW_AUX_ONLY_EXPERIMENT']="1"
 
 CONFIG = {}
-STATUS = { 'mode': 'starting' }
+STATUS = { 'mode': 'starting', 'max_passes': -1 }
 
 #  Map of node -> fixed size queue (ring buffer) containing 0 (healthy) or 1 (unhealthy) for each probe
 PROBE_HISTORY = {}
@@ -201,9 +201,7 @@ def load_config(args):
     CONFIG['https_key_file'] = config_json.get('https_key_file', './key.pem')
     CONFIG['https_cert_file'] = config_json.get('https_cert_file', './cert.pem')
 
-    if args.verbose:
-        print('config:')
-        pprint.pprint(CONFIG, indent=4)
+    logging.info(f'config:\n{json.dumps(CONFIG,)}')
 
     if args.list:
         for node in CONFIG['nodes']:
@@ -267,7 +265,7 @@ def run_loop_step():
         # and we learned nothing about the remote health. Ignore this pass and try again later.
         if ret == Health.HEALTHY:
             PROBE_HISTORY[node].append(0)
-            LAST_HEALTHY[node] = time.time()
+            LAST_HEALTHY[node] = int(time.time())
         elif ret == Health.UNHEALTHY:
             PROBE_HISTORY[node].append(1)
 
@@ -330,7 +328,7 @@ def send_probe(node):
         RIG.open()
         RIG.set_freq(Hamlib.RIG_VFO_CURR, int(node.frequency * 1e6))
         RIG.close()
-    except RuntimeError as e:
+    except (RuntimeError, InvalidStateError) as e:
         # If the error is while setting the frequency, don't blame the remote node.  Just retry next cycle.
         raise LocalRigError from e
     run([CONFIG['pat'], '-s', 'connect', f'varafm:///{node.peer}'], env=env, check=True)
@@ -407,7 +405,7 @@ def health_state_dicts():
         state['peer'] = node.peer
         state['state'] = HEALTH_STATE[node]
         state['history'] = history_string(history)
-        state['last_healthy'] = LAST_HEALTHY[node]
+        state['last_healthy'] = int(LAST_HEALTHY[node])
         states.append(state)
     return states
 
@@ -444,7 +442,7 @@ def assert_outbox_empty():
 
 def canary_status():
     if STATUS['mode'] == 'sleeping':
-        STATUS['time_left'] = STATUS['sleep_start_time'] + CONFIG['next_pass_delay'] - time.time()
+        STATUS['time_left'] = int(STATUS['sleep_start_time'] + CONFIG['next_pass_delay'] - time.time())
     else:
         STATUS['time_left'] = 0
     return {'status': STATUS, 'health': health_state_dicts() }
@@ -456,9 +454,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/status":
-            response = f'{json.dumps(canary_status(), indent=4)}\n'
+            response = f'<pre>{json.dumps(canary_status(), indent=4)}</pre>\n'
         elif self.path == "/config":
-            response = f'{json.dumps(CONFIG, indent=4)}\n'
+            response = f'<pre>{json.dumps(CONFIG, indent=4)}</pre>\n'
         else:
             response = 'Help:\n/status - for current status of nodes\n/config - for configuration\n'
         self.send_response(200)
@@ -480,11 +478,12 @@ def create_httpserver():
 
 def sleep_between_passes():
     STATUS['mode'] = 'sleeping'
-    STATUS['sleep_start_time'] = time.time()
+    STATUS['sleep_start_time'] = int(time.time())
     STATUS['next_pass_delay'] = CONFIG['next_pass_delay']
     logging.info("sleeping for %s seconds...", {CONFIG['next_pass_delay']})
     time.sleep(CONFIG['next_pass_delay'])
     STATUS['sleep_start_time'] = 0
+    STATUS['pass'] += 1
 
 
 # MAIN
@@ -500,16 +499,19 @@ def main():
     parser.add_argument('nodes', nargs='*', help='specific systems to test (either name or peer call)', default=[])
     args = parser.parse_args()
 
-    STATUS['start_time'] = time.time()
+    STATUS['start_time'] = int(time.time())
+    STATUS['pass'] = 1
     load_config(args)
     threading.Thread(target=create_httpserver, daemon=True).start()
 
     setup(args)
     if args.daemon:
+        STATUS['max_passes'] = -1
         while True:
             run_loop_step()
             sleep_between_passes()
     else:
+        STATUS['max_passes'] = args.count
         for count in range(int(args.count)):
             run_loop_step()
             if count < args.count - 1:
