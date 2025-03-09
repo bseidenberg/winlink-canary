@@ -281,6 +281,7 @@ def run_loop_step():
 
     # Clean up
     clear_inbox()
+    clear_sent()
 
 
 class LocalRigError(Exception):
@@ -434,6 +435,10 @@ def clear_inbox():
 def clear_outbox():
     # No .check_returncode because we may not have any
     run(f"rm -f {CONFIG['mailbox_base']}/out/*", shell=True, check=False)
+
+def clear_sent():
+    # No .check_returncode because we may not have any
+    run(f"rm -f {CONFIG['mailbox_base']}/sent/*", shell=True, check=False)
 
 def assert_outbox_empty():
     '''Assert the outbox is empty.'''
