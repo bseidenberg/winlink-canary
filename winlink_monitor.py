@@ -33,12 +33,12 @@ import json
 import logging
 import os
 import re
+import secrets
 import ssl
 import sys
 import syslog
 import threading
 import time
-import uuid
 from asyncio import InvalidStateError
 from collections import namedtuple, deque
 from enum import Enum
@@ -90,6 +90,10 @@ def load_config(args):
 
     # How many runs we look back at for determining health
     CONFIG['health_window_size'] = int(config_json.get("health_window_size", 5))
+
+    # Optional processes to run before and/or after each pass
+    CONFIG['pre_pass_process'] = config_json.get("pre_pass_process", None)
+    CONFIG['post_pass_process'] = config_json.get("post_pass_process", None)
 
     # How long to wait between passes (O(hours) - we don't want to hog the channel)
     if args.next_pass_delay > 0:
@@ -257,6 +261,10 @@ def run_loop_step():
        Determines which nodes changed states in this pass, and reports the change
     '''
 
+    if CONFIG['pre_pass_process']:
+        logging.info(f"Running {CONFIG['pre_pass_process']}")
+        run([CONFIG['pre_pass_process']], check=False)
+
     for node in CONFIG['nodes']:
         STATUS['mode'] = f'polling {node.name}'
         ret = check_health(node)
@@ -268,6 +276,10 @@ def run_loop_step():
             LAST_HEALTHY[node] = int(time.time())
         elif ret == Health.UNHEALTHY:
             PROBE_HISTORY[node].append(1)
+
+    if CONFIG['post_pass_process']:
+        logging.info(f"Running {CONFIG['post_pass_process']}")
+        run([CONFIG['post_pass_process']], check=False)
 
     # Calculate the new health state
     new_health_state = calculate_health_state()
@@ -317,10 +329,10 @@ def check_health(node):
 
 
 def send_probe(node):
-    probe = Probe(str(uuid.uuid4()), time.time())
+    probe = Probe(secrets.token_urlsafe(10), time.time())
 
     logging.info('Composing %s to %s at %s', probe.id, node.name, probe.timestamp)
-    body = f"Message to {node.name} on {node.frequency} at {probe.timestamp}".encode()
+    body = f"To {node.peer}, {node.frequency} at {int(probe.timestamp)}".encode()
     run([CONFIG['pat'], 'compose', '-s', probe.id, CONFIG['rx_aux_callsign'], '-r', CONFIG['sender']], input=body, env=env, check=True)
     logging.info('Composed. Changing frequency to %s.', node.frequency)
     # Change frequency - we open and close the RIG handle to avoid fighting with VARA on the serial port
