@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-#
+'''
 # Winlink/VARA node monitor
 #
 # This program is designed to act as a canary (health monitor) for the SeattleACS Winlink/VARA nodes.
@@ -27,6 +27,7 @@
 #  * Logging needs to be cleaned up - and we need to figure out how to handle our output, pat's output, etc.
 #  * There is currently no notification mechanism for failures. This will get written once the rest of everything is
 #    working.
+'''
 
 import argparse
 import json
@@ -123,6 +124,8 @@ def load_config(args):
     except KeyError:
         sys.stderr.write("ERROR: Missing pat_call in config!\n")
         sys.exit(1)
+
+    CONFIG['pat_config'] = config_json.get('pat_config', None)
 
     # TODO: Make this optional
     try:
@@ -224,9 +227,6 @@ def setup(args):
     else:
         logging.basicConfig(level=logging.WARNING)
 
-    # Check VARA's health
-    pass # TODO
-
     # Initiate PROBE_HISTORY and HEALTH_STATE
     for node in CONFIG['nodes']:
         PROBE_HISTORY[node] = deque(maxlen=CONFIG['health_window_size'])
@@ -298,7 +298,7 @@ def run_loop_step():
 
 class LocalRigError(Exception):
     '''Raise when there is a local radio error unrelated to the remote site.'''
-    pass
+
 
 def check_health(node):
     '''
@@ -333,7 +333,12 @@ def send_probe(node):
 
     logging.info('Composing %s to %s at %s', probe.id, node.name, probe.timestamp)
     body = f"To {node.peer}, {node.frequency} at {int(probe.timestamp)}".encode()
-    run([CONFIG['pat'], 'compose', '-s', probe.id, CONFIG['rx_aux_callsign'], '-r', CONFIG['sender']], input=body, env=env, check=True)
+    run_args = [CONFIG['pat'], '--send-only']
+    if CONFIG['pat_config']:
+        run_args.extend(['--config', CONFIG['pat_config']])
+    run_args.extend(['compose', '-s', probe.id, CONFIG['rx_aux_callsign'], '-r', CONFIG['sender']])
+    print(f'run_args is {run_args}');
+    run(run_args, input=body, env=env, check=True)
     logging.info('Composed. Changing frequency to %s.', node.frequency)
     # Change frequency - we open and close the RIG handle to avoid fighting with VARA on the serial port
     # if it's being used for PTT (ex: IC-705). Doesn't matter for a DRA/Signalink.
