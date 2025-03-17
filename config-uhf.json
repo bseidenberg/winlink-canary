@@ -1,10 +1,12 @@
 {
     "sender": "ACS-WL",
     "pat_call": "W7ACS-1",
+    "pat_config": "/home/winlink/.config/pat/config-uhf.json",
     "rx_aux_call": "ACS-WLCPWT",
     "rig_port": "/dev/ttyUSB_TAIT_UHF",
     "rig_port_speed": "9600",
     "rig_model": "TAIT",
+    "pre_pass_process": "/home/winlink/bin/start-varafm1",
     "syslog_enabled": "True",
     "dedicated_mailbox": "True",
     "nodes": [

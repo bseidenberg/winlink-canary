@@ -1,3 +1,5 @@
+#!/usr/bin/python3
+'''
 # Winlink/VARA node monitor
 #
 # This program is designed to act as a canary (health monitor) for the SeattleACS Winlink/VARA nodes.
@@ -25,20 +27,22 @@
 #  * Logging needs to be cleaned up - and we need to figure out how to handle our output, pat's output, etc.
 #  * There is currently no notification mechanism for failures. This will get written once the rest of everything is
 #    working.
+'''
 
 import argparse
 import json
 import logging
 import os
-import pprint
 import re
+import secrets
 import ssl
 import sys
 import syslog
 import threading
 import time
-import uuid
+from asyncio import InvalidStateError
 from collections import namedtuple, deque
+from enum import Enum
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from subprocess import run, CalledProcessError
@@ -53,7 +57,7 @@ env = os.environ.copy()
 env['FW_AUX_ONLY_EXPERIMENT']="1"
 
 CONFIG = {}
-STATUS = { 'mode': 'starting' }
+STATUS = { 'mode': 'starting', 'max_passes': -1 }
 
 #  Map of node -> fixed size queue (ring buffer) containing 0 (healthy) or 1 (unhealthy) for each probe
 PROBE_HISTORY = {}
@@ -61,6 +65,13 @@ PROBE_HISTORY = {}
 HEALTH_STATE = {}
 #  Map of node -> the timestamp of the last healthy check of the node
 LAST_HEALTHY = {}
+
+
+# Return from check_health()
+class Health(Enum):
+    HEALTHY = 1
+    UNHEALTHY = 2
+    UNKNOWN = 3
 
 
 def str2bool(arg):
@@ -80,6 +91,10 @@ def load_config(args):
 
     # How many runs we look back at for determining health
     CONFIG['health_window_size'] = int(config_json.get("health_window_size", 5))
+
+    # Optional processes to run before and/or after each pass
+    CONFIG['pre_pass_process'] = config_json.get("pre_pass_process", None)
+    CONFIG['post_pass_process'] = config_json.get("post_pass_process", None)
 
     # How long to wait between passes (O(hours) - we don't want to hog the channel)
     if args.next_pass_delay > 0:
@@ -109,6 +124,8 @@ def load_config(args):
     except KeyError:
         sys.stderr.write("ERROR: Missing pat_call in config!\n")
         sys.exit(1)
+
+    CONFIG['pat_config'] = config_json.get('pat_config', None)
 
     # TODO: Make this optional
     try:
@@ -191,9 +208,7 @@ def load_config(args):
     CONFIG['https_key_file'] = config_json.get('https_key_file', './key.pem')
     CONFIG['https_cert_file'] = config_json.get('https_cert_file', './cert.pem')
 
-    if args.verbose:
-        print('config:')
-        pprint.pprint(CONFIG, indent=4)
+    logging.info(f'config:\n{json.dumps(CONFIG,)}')
 
     if args.list:
         for node in CONFIG['nodes']:
@@ -211,9 +226,6 @@ def setup(args):
         logging.basicConfig(level=logging.INFO)
     else:
         logging.basicConfig(level=logging.WARNING)
-
-    # Check VARA's health
-    pass # TODO
 
     # Initiate PROBE_HISTORY and HEALTH_STATE
     for node in CONFIG['nodes']:
@@ -236,6 +248,7 @@ def setup(args):
         syslog.openlog(ident="winlink_monitor")
         syslog.syslog("winlink_monitor running")
 
+
 def run_loop_step():
     '''Check the health of each node.
        Append healty to the node's circular buffer of health status
@@ -248,14 +261,25 @@ def run_loop_step():
        Determines which nodes changed states in this pass, and reports the change
     '''
 
+    if CONFIG['pre_pass_process']:
+        logging.info(f"Running {CONFIG['pre_pass_process']}")
+        run([CONFIG['pre_pass_process']], check=False)
+
     for node in CONFIG['nodes']:
         STATUS['mode'] = f'polling {node.name}'
-        success = check_health(node)
-        if success:
+        ret = check_health(node)
+
+        # We explictly ignore return health of UNKNOWN. This indicates our probe failed locally
+        # and we learned nothing about the remote health. Ignore this pass and try again later.
+        if ret == Health.HEALTHY:
             PROBE_HISTORY[node].append(0)
-            LAST_HEALTHY[node] = time.time()
-        else:
+            LAST_HEALTHY[node] = int(time.time())
+        elif ret == Health.UNHEALTHY:
             PROBE_HISTORY[node].append(1)
+
+    if CONFIG['post_pass_process']:
+        logging.info(f"Running {CONFIG['post_pass_process']}")
+        run([CONFIG['post_pass_process']], check=False)
 
     # Calculate the new health state
     new_health_state = calculate_health_state()
@@ -269,6 +293,11 @@ def run_loop_step():
 
     # Clean up
     clear_inbox()
+    clear_sent()
+
+
+class LocalRigError(Exception):
+    '''Raise when there is a local radio error unrelated to the remote site.'''
 
 
 def check_health(node):
@@ -285,27 +314,41 @@ def check_health(node):
     try:
         pending_probe = send_probe(node)
         assert_outbox_empty()
+    except LocalRigError:
+        logging.error('Failed to transmit probe to node %s (local error)', node.name)
+        # Cleanup non-empty outbox
+        clear_outbox()
+        return Health.UNKNOWN
     except (RuntimeError, CalledProcessError):
         logging.error('Failed to transmit probe to node %s!', node.name)
         # Cleanup non-empty outbox
         clear_outbox()
-        return False
+        return Health.UNHEALTHY
 
     return poll_for_probe(pending_probe)
 
 
 def send_probe(node):
-    probe = Probe(str(uuid.uuid4()), time.time())
+    probe = Probe(secrets.token_urlsafe(10), time.time())
 
     logging.info('Composing %s to %s at %s', probe.id, node.name, probe.timestamp)
-    body = f"Canary message sent to {node.name} on {node.frequency} at {probe.timestamp}".encode()
-    run([CONFIG['pat'], 'compose', '-s', probe.id, CONFIG['rx_aux_callsign'], '-r', CONFIG['sender']], input=body, env=env, check=True)
+    body = f"To {node.peer}, {node.frequency} at {int(probe.timestamp)}".encode()
+    run_args = [CONFIG['pat'], '--send-only']
+    if CONFIG['pat_config']:
+        run_args.extend(['--config', CONFIG['pat_config']])
+    run_args.extend(['compose', '-s', probe.id, CONFIG['rx_aux_callsign'], '-r', CONFIG['sender']])
+    print(f'run_args is {run_args}');
+    run(run_args, input=body, env=env, check=True)
     logging.info('Composed. Changing frequency to %s.', node.frequency)
     # Change frequency - we open and close the RIG handle to avoid fighting with VARA on the serial port
     # if it's being used for PTT (ex: IC-705). Doesn't matter for a DRA/Signalink.
-    RIG.open()
-    RIG.set_freq(Hamlib.RIG_VFO_CURR, int(node.frequency * 1e6))
-    RIG.close()
+    try:
+        RIG.open()
+        RIG.set_freq(Hamlib.RIG_VFO_CURR, int(node.frequency * 1e6))
+        RIG.close()
+    except (RuntimeError, InvalidStateError) as e:
+        # If the error is while setting the frequency, don't blame the remote node.  Just retry next cycle.
+        raise LocalRigError from e
     run([CONFIG['pat'], '-s', 'connect', f'varafm:///{node.peer}'], env=env, check=True)
 
     logging.info('Sent!')
@@ -329,14 +372,14 @@ def poll_for_probe(probe):
             # Check for our probe
             if probe.id in rxd_probe_ids:
                 logging.info("Probe found!")
-                return True
+                return Health.HEALTHY
 
         # Exponential Backoff
         logging.info("Probe not found, sleeping...")
         sleep_int = 2*sleep_int
 
     logging.warning('Giving up on probe %s', probe.id)
-    return False
+    return Health.UNHEALTHY
 
 def fetch_all():
     download_mail_via_telnet()
@@ -380,7 +423,7 @@ def health_state_dicts():
         state['peer'] = node.peer
         state['state'] = HEALTH_STATE[node]
         state['history'] = history_string(history)
-        state['last_healthy'] = LAST_HEALTHY[node]
+        state['last_healthy'] = int(LAST_HEALTHY[node])
         states.append(state)
     return states
 
@@ -410,6 +453,10 @@ def clear_outbox():
     # No .check_returncode because we may not have any
     run(f"rm -f {CONFIG['mailbox_base']}/out/*", shell=True, check=False)
 
+def clear_sent():
+    # No .check_returncode because we may not have any
+    run(f"rm -f {CONFIG['mailbox_base']}/sent/*", shell=True, check=False)
+
 def assert_outbox_empty():
     '''Assert the outbox is empty.'''
     if len(os.listdir(CONFIG['mailbox_base'] + "/out")) > 0:
@@ -417,7 +464,7 @@ def assert_outbox_empty():
 
 def canary_status():
     if STATUS['mode'] == 'sleeping':
-        STATUS['time_left'] = STATUS['sleep_start_time'] + CONFIG['next_pass_delay'] - time.time()
+        STATUS['time_left'] = int(STATUS['sleep_start_time'] + CONFIG['next_pass_delay'] - time.time())
     else:
         STATUS['time_left'] = 0
     return {'status': STATUS, 'health': health_state_dicts() }
@@ -429,9 +476,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/status":
-            response = f'{json.dumps(canary_status(), indent=4)}\n'
+            response = f'<pre>{json.dumps(canary_status(), indent=4)}</pre>\n'
         elif self.path == "/config":
-            response = f'{json.dumps(CONFIG, indent=4)}\n'
+            response = f'<pre>{json.dumps(CONFIG, indent=4)}</pre>\n'
         else:
             response = 'Help:\n/status - for current status of nodes\n/config - for configuration\n'
         self.send_response(200)
@@ -445,16 +492,20 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 def create_httpserver():
     server = ThreadedHTTPServer((CONFIG['http_address'], CONFIG['http_port']), Handler)
     if CONFIG['use_https']:
-        server.socket = ssl.wrap_socket(server.socket, keyfile='./key.pem', certfile='./cert.pem', server_side=True)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)  # Create SSL context
+        context.load_cert_chain(certfile='./cert.pem', keyfile='./key.pem')  # Load cert and key
+        server.socket = context.wrap_socket(server.socket, server_side=True)  # Wrap the socket
+
     server.serve_forever()
 
 def sleep_between_passes():
     STATUS['mode'] = 'sleeping'
-    STATUS['sleep_start_time'] = time.time()
+    STATUS['sleep_start_time'] = int(time.time())
     STATUS['next_pass_delay'] = CONFIG['next_pass_delay']
-    logging.info(f"sleeping for {CONFIG['next_pass_delay']} seconds...")
+    logging.info("sleeping for %s seconds...", {CONFIG['next_pass_delay']})
     time.sleep(CONFIG['next_pass_delay'])
     STATUS['sleep_start_time'] = 0
+    STATUS['pass'] += 1
 
 
 # MAIN
@@ -470,16 +521,19 @@ def main():
     parser.add_argument('nodes', nargs='*', help='specific systems to test (either name or peer call)', default=[])
     args = parser.parse_args()
 
-    STATUS['start_time'] = time.time()
+    STATUS['start_time'] = int(time.time())
+    STATUS['pass'] = 1
     load_config(args)
     threading.Thread(target=create_httpserver, daemon=True).start()
 
     setup(args)
     if args.daemon:
+        STATUS['max_passes'] = -1
         while True:
             run_loop_step()
             sleep_between_passes()
     else:
+        STATUS['max_passes'] = args.count
         for count in range(int(args.count)):
             run_loop_step()
             if count < args.count - 1:
