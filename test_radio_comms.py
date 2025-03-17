@@ -16,9 +16,11 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 #
+# This is a diagnostic program. This program is intended to stress tait.py and the radio's serial
+# control to ensure that we don't have flaky control channel (which we thought we we seeing).
+# The program helped prove that at least in the absence of RF feedback the system was stable.
 #
-# Current status: The script is currently in DRAFT status. While parts of it are tested, it is not yet ready for a
-# "first release"
+# Current status: Ready for initial release.
 
 import argparse
 import json
