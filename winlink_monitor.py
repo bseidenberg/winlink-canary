@@ -69,6 +69,7 @@ LAST_HEALTHY = {}
 
 # Return from check_health()
 class Health(Enum):
+    '''Enum possible health states. UNKNOWN implies not enough samples.'''
     HEALTHY = 1
     UNHEALTHY = 2
     UNKNOWN = 3
@@ -91,6 +92,12 @@ def load_config(args):
 
     # How many runs we look back at for determining health
     CONFIG['health_window_size'] = int(config_json.get("health_window_size", 5))
+
+    # How much health history we should keep.  Anything more than health_window_size
+    # is for human consumption through the web interface to assess historicl health.
+    # Force this to be at least health_window_size.
+    CONFIG['history_size'] = max(int(config_json.get("history_size", 60)),
+                                 CONFIG['health_window_size'])
 
     # Optional processes to run before and/or after each pass
     CONFIG['pre_pass_process'] = config_json.get("pre_pass_process", None)
@@ -229,7 +236,7 @@ def setup(args):
 
     # Initiate PROBE_HISTORY and HEALTH_STATE
     for node in CONFIG['nodes']:
-        PROBE_HISTORY[node] = deque(maxlen=CONFIG['health_window_size'])
+        PROBE_HISTORY[node] = deque(maxlen=CONFIG['history_size'])
         HEALTH_STATE[node] = 'PENDING'
 
     # Instantiate Hamlib.
@@ -337,7 +344,7 @@ def send_probe(node):
     if CONFIG['pat_config']:
         run_args.extend(['--config', CONFIG['pat_config']])
     run_args.extend(['compose', '-s', probe.id, CONFIG['rx_aux_callsign'], '-r', CONFIG['sender']])
-    print(f'run_args is {run_args}');
+    print(f'run_args is {run_args}')
     run(run_args, input=body, env=env, check=True)
     logging.info('Composed. Changing frequency to %s.', node.frequency)
     # Change frequency - we open and close the RIG handle to avoid fighting with VARA on the serial port
@@ -404,6 +411,8 @@ def find_all_ids():
 def calculate_health_state():
     state = {}
     for (node, history) in PROBE_HISTORY.items():
+        # Only look at the last health_window_size entries in history
+        history = history[-CONFIG['health_window_size']:]
         logging.info('Probe History for %s (%s)\t%s', node.name, node.peer, history_string(history))
         if len(history) < CONFIG['health_window_size']:
             state[node] = 'PENDING'
@@ -422,12 +431,13 @@ def health_state_dicts():
         state['name'] = node.name
         state['peer'] = node.peer
         state['state'] = HEALTH_STATE[node]
-        state['history'] = history_string(history)
+        state['history'] = history_string(history) # return full history
         state['last_healthy'] = int(LAST_HEALTHY[node])
         states.append(state)
     return states
 
 def history_string(history):
+    '''Render the history as a string of + and - characters.'''
     ret = ""
     for item in history:
         if item == 0:
@@ -446,15 +456,15 @@ def diff_and_report_health_state(old, new):
 
 
 def clear_inbox():
-    # No .check_returncode because we may not have any (on failure)
+    '''Empty inbox folder. No .check_returncode because we may not have any (on failure).'''
     run(f"rm -f {CONFIG['mailbox_base']}/in/*", shell=True, check=False)
 
 def clear_outbox():
-    # No .check_returncode because we may not have any
+    '''Empty outbox folder. No .check_returncode because we may not have any.'''
     run(f"rm -f {CONFIG['mailbox_base']}/out/*", shell=True, check=False)
 
 def clear_sent():
-    # No .check_returncode because we may not have any
+    '''Empty sent folder. No .check_returncode because we may not have any.'''
     run(f"rm -f {CONFIG['mailbox_base']}/sent/*", shell=True, check=False)
 
 def assert_outbox_empty():
@@ -463,6 +473,7 @@ def assert_outbox_empty():
         raise RuntimeError("Outbox is non-empty - We don't handle this yet")
 
 def canary_status():
+    '''Returns current status to answer web query on /status.'''
     if STATUS['mode'] == 'sleeping':
         STATUS['time_left'] = int(STATUS['sleep_start_time'] + CONFIG['next_pass_delay'] - time.time())
     else:
@@ -473,6 +484,7 @@ def canary_status():
 # Webserver to handle status requests
 
 class Handler(BaseHTTPRequestHandler):
+    '''Basis for diagnostic web interface'''
 
     def do_GET(self):
         if self.path == "/status":
@@ -487,9 +499,10 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(bytes(str(response), 'utf-8'))
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
-    """Handle requests in a separate thread."""
+    '''Handle requests in a separate thread.'''
 
 def create_httpserver():
+    '''Start the webserver.'''
     server = ThreadedHTTPServer((CONFIG['http_address'], CONFIG['http_port']), Handler)
     if CONFIG['use_https']:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)  # Create SSL context
@@ -499,6 +512,7 @@ def create_httpserver():
     server.serve_forever()
 
 def sleep_between_passes():
+    '''Besides sleeping, it records our current state and increments the pass count.'''
     STATUS['mode'] = 'sleeping'
     STATUS['sleep_start_time'] = int(time.time())
     STATUS['next_pass_delay'] = CONFIG['next_pass_delay']
