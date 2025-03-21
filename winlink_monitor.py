@@ -412,7 +412,7 @@ def calculate_health_state():
     state = {}
     for (node, history) in PROBE_HISTORY.items():
         # Only look at the last health_window_size entries in history
-        history = history[-CONFIG['health_window_size']:]
+        history = list(history)[-(CONFIG['health_window_size']):]
         logging.info('Probe History for %s (%s)\t%s', node.name, node.peer, history_string(history))
         if len(history) < CONFIG['health_window_size']:
             state[node] = 'PENDING'
