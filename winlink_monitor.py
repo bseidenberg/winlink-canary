@@ -84,10 +84,12 @@ def load_config(args):
     '''
     config_json = json.load(open(args.config, 'r'))
 
-    # Time to wait (seconds) between sending a probe and checking for it. There's then exponential backoff for the retries.
+    # Time to wait (seconds) between sending a probe and checking for it.
+    # There's then exponential backoff for the retries.
     CONFIG['fetch_retry_interval_seconds'] = int(config_json.get("fetch_retry_interval_seconds", 30))
 
-    # Number of times to retry looking for a probe. (There's exponential backoff between them - see interval, above)
+    # Number of times to retry looking for a probe.
+    # There's exponential backoff between them - see interval, above.
     CONFIG['fetch_retries_count'] = int(config_json.get("fetch_retries_count", 3))
 
     # How many runs we look back at for determining health
@@ -152,9 +154,13 @@ def load_config(args):
     # Note: The default is a.) linux-specific and b.) assumes pat > 0.12.
     #       The latter assumption should be fine since vara support also assumes this.
     #       The former assumption really should do more XDG lookups but eh (future TODO)
-    CONFIG['mailbox_base'] = config_json.get(
-        'mailbox_base_path', 
-        f"{os.environ['HOME']}/.local/share/pat/mailbox/{CONFIG['pat_call']}")
+    CONFIG['pat_mailbox_path'] = config_json.get(
+        'pat_mailbox_path',
+        f"{os.environ['HOME']}/.local/share/pat/mailbox/")
+    if CONFIG['pat_mailbox_path'][-1] != '/':
+        CONFIG['pat_mailbox_path'] += '/'
+
+    CONFIG['mailbox_base'] = f"{CONFIG['pat_mailbox_path']}{CONFIG['pat_call']}"
 
     # Path to the pat binary
     CONFIG['pat'] = config_json.get("pat_bin_path", "pat")
@@ -215,7 +221,7 @@ def load_config(args):
     CONFIG['https_key_file'] = config_json.get('https_key_file', './key.pem')
     CONFIG['https_cert_file'] = config_json.get('https_cert_file', './cert.pem')
 
-    logging.info(f'config:\n{json.dumps(CONFIG,)}')
+    logging.info('config:\n%s', json.dumps(CONFIG))
 
     if args.list:
         for node in CONFIG['nodes']:
@@ -240,13 +246,14 @@ def setup(args):
         HEALTH_STATE[node] = 'PENDING'
 
     # Instantiate Hamlib.
-    # Note that we do not use rigctld because we want to open/close the serial port to allow VARA to share it and VARA
-    # does not support rigctld
+    # Note that we do not use rigctld because we want to open/close the serial port to allow
+    # VARA to share it and VARA does not support rigctld
     global RIG
     if CONFIG['rig_model'] == "TAIT":
         RIG = Tait(CONFIG['rig_port_path'], CONFIG['rig_port_speed'])
     else:
-        Hamlib.rig_set_debug(Hamlib.RIG_DEBUG_NONE) # Disable the very, very verbose logging that hamlib does by default
+        # Disable the very, very verbose logging that hamlib does by default
+        Hamlib.rig_set_debug(Hamlib.RIG_DEBUG_NONE)
         RIG = Hamlib.Rig(rig_model=CONFIG['rig_model'])
         RIG.set_conf("rig_pathname", CONFIG['rig_port_path'])
 
@@ -259,17 +266,19 @@ def setup(args):
 def run_loop_step():
     '''Check the health of each node.
        Append healty to the node's circular buffer of health status
-       This is the main logic loop for the canary. We invoke this from inside a loop - each invocation is a step.
+       This is the main logic loop for the canary.
+       We invoke this from inside a loop - each invocation is a step.
 
        Each step does the following:
        For each node, sends a probe over RF then polls over the internet to ensure it's recieved.
        Adds an entry to each node's health buffer for either healthy or unhealthy
-       Checks the state of the buffer to calculate whether a node is HEALTHY, UNHEALTHY or PENDING (insufficient data)
+       Checks the state of the buffer to calculate whether a node is HEALTHY, UNHEALTHY,
+       or PENDING (insufficient data)
        Determines which nodes changed states in this pass, and reports the change
     '''
 
     if CONFIG['pre_pass_process']:
-        logging.info(f"Running {CONFIG['pre_pass_process']}")
+        logging.info("Running %s", CONFIG['pre_pass_process'])
         run([CONFIG['pre_pass_process']], check=False)
 
     for node in CONFIG['nodes']:
@@ -285,7 +294,7 @@ def run_loop_step():
             PROBE_HISTORY[node].append(1)
 
     if CONFIG['post_pass_process']:
-        logging.info(f"Running {CONFIG['post_pass_process']}")
+        logging.info("Running %s", CONFIG['post_pass_process'])
         run([CONFIG['post_pass_process']], check=False)
 
     # Calculate the new health state
@@ -313,7 +322,7 @@ def check_health(node):
     Returns True for healthy, False for unhealthy
     '''
 
-    if CONFIG['dedicated_mailbox']:
+    if 'dedicated_mailbox' in CONFIG:
         clear_outbox()
     else:
         assert_outbox_empty()
@@ -335,37 +344,48 @@ def check_health(node):
     return poll_for_probe(pending_probe)
 
 
+def pat_base_args():
+    args = [CONFIG['pat']]
+    if 'pat_mailbox_path' in CONFIG:
+        args.extend(['--mbox', CONFIG['pat_mailbox_path']])
+    if 'pat_config' in CONFIG:
+        args.extend(['--config', CONFIG['pat_config']])
+    return args
+
 def send_probe(node):
     probe = Probe(secrets.token_urlsafe(10), time.time())
 
     logging.info('Composing %s to %s at %s', probe.id, node.name, probe.timestamp)
     body = f"To {node.peer}, {node.frequency} at {int(probe.timestamp)}".encode()
-    run_args = [CONFIG['pat'], '--send-only']
-    if CONFIG['pat_config']:
-        run_args.extend(['--config', CONFIG['pat_config']])
-    run_args.extend(['compose', '-s', probe.id, CONFIG['rx_aux_callsign'], '-r', CONFIG['sender']])
-    print(f'run_args is {run_args}')
-    run(run_args, input=body, env=env, check=True)
+    args = pat_base_args()
+    args.extend(['compose', '-s', probe.id, CONFIG['rx_aux_callsign'], '-r', CONFIG['sender']])
+    print(f'args is {args}')
+    run(args, input=body, env=env, check=True)
     logging.info('Composed. Changing frequency to %s.', node.frequency)
-    # Change frequency - we open and close the RIG handle to avoid fighting with VARA on the serial port
-    # if it's being used for PTT (ex: IC-705). Doesn't matter for a DRA/Signalink.
+
+    # Change frequency - we open and close the RIG handle to avoid fighting with VARA
+    # on the serial port if it's being used for PTT (ex: IC-705). Doesn't matter for a DRA/Signalink.
     try:
         RIG.open()
         RIG.set_freq(Hamlib.RIG_VFO_CURR, int(node.frequency * 1e6))
         RIG.close()
     except (RuntimeError, InvalidStateError) as e:
-        # If the error is while setting the frequency, don't blame the remote node.  Just retry next cycle.
+        # If error is while setting the frequency, don't blame the remote node.  Just retry next cycle.
         raise LocalRigError from e
-    run([CONFIG['pat'], '-s', 'connect', f'varafm:///{node.peer}'], env=env, check=True)
+
+    args = pat_base_args()
+    args.extend(['--send-only', 'connect', f'varafm:///{node.peer}'])
+    run(args, env=env, check=True)
 
     logging.info('Sent!')
-
     return probe
 
 def poll_for_probe(probe):
+    '''Try to fetch the probe message from CMS via Winlink telnet.'''
     sleep_int = CONFIG['fetch_retry_interval_seconds']
     for i in range(CONFIG['fetch_retries_count']):
-        logging.info('Try %d to fetch probe %s. Will sleep %d seconds first...', i+1, probe.id, sleep_int)
+        logging.info('Try %d to fetch probe %s. Will sleep %d seconds first...',
+                     i+1, probe.id, sleep_int)
 
         # Sleep first to give the remote system time to handle the sent mail
         time.sleep(sleep_int)
@@ -374,7 +394,7 @@ def poll_for_probe(probe):
             # Fetch pending mail
             rxd_probe_ids = fetch_all()
         except (CalledProcessError) as e:
-            logging.error(f'Probe failure: {e}')
+            logging.error('Probe failure: %s', e)
         else:
             # Check for our probe
             if probe.id in rxd_probe_ids:
@@ -389,12 +409,15 @@ def poll_for_probe(probe):
     return Health.UNHEALTHY
 
 def fetch_all():
+    '''Attempt 1 fetch from CMS via telnet. Messages are stored in pat inbox.'''
     download_mail_via_telnet()
     return find_all_ids()
 
 def download_mail_via_telnet():
     '''Run pat over telnet to download all of our pending messages'''
-    run([CONFIG['pat'], 'connect', 'telnet'], env=env, check=True)
+    args = pat_base_args()
+    args.extend(['connect', 'telnet'])
+    run(args, env=env, check=True)
 
 def find_all_ids():
     '''Find all ids in inbox.
@@ -425,6 +448,7 @@ def calculate_health_state():
     return state
 
 def health_state_dicts():
+    '''Builds array of health state dicts for use by web server.'''
     states = []
     for (node, history) in PROBE_HISTORY.items():
         state = {}
@@ -443,11 +467,12 @@ def history_string(history):
         if item == 0:
             ret += "+"
         else:
-            ret += "-"
+            ret += "O" # more visible than a '- in the array
     return ret
 
 
 def diff_and_report_health_state(old, new):
+    '''Report changes in state. This may triggers alterting in the monitoring system.'''
     for (node, health) in new.items():
         if old[node] != health:
             logging.warning('STATE CHANGE: %s (%s) transitioned %s -> %s', node.name, node.peer, old[node], health)
@@ -516,7 +541,7 @@ def sleep_between_passes():
     STATUS['mode'] = 'sleeping'
     STATUS['sleep_start_time'] = int(time.time())
     STATUS['next_pass_delay'] = CONFIG['next_pass_delay']
-    logging.info("sleeping for %s seconds...", {CONFIG['next_pass_delay']})
+    logging.info("sleeping for %s seconds...", CONFIG['next_pass_delay'])
     time.sleep(CONFIG['next_pass_delay'])
     STATUS['sleep_start_time'] = 0
     STATUS['pass'] += 1
