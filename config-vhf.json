@@ -1,0 +1,28 @@
+{
+    "sender": "ACS-WL",
+    "pat_call": "W7ACS-2",
+    "pat_config": "/home/winlink/.config/pat/config-vhf.json",
+    "pat_mailbox_path": "/home/winlink/.local/share/pat/vhftest",
+    "radio_lockfile": "/home/winlink/winlink-canary/radio_lockfile",
+    "rx_aux_call": "SEAACS-VHFTEST",
+    "rig_port": "/dev/ttyUSB_TAIT_VHF",
+    "rig_port_speed": "9600",
+    "rig_model": "TAIT",
+    "pre_pass_process": "/home/winlink/bin/start-varafm2",
+    "syslog_enabled": "True",
+    "dedicated_mailbox": "True",
+    "http_address": "0.0.0.0",
+    "http_port": "8081",
+    "use_https": "False",
+    "https_cert_file": "/etc/letsencrypt/live/winlink-canary.msv.hamwan.net/fullchain.pem",
+    "https_key_file": "/etc/letsencrypt/live/winlink-canary.msv.hamwan.net/privkey.pem",
+    "nodes": [
+        {"name": "KD7DK-10",  "frequency": 144.900, "peer": "KD7DK-10"},
+        {"name": "W7MIR-10",  "frequency": 145.030, "peer": "W7MIR-10"},
+        {"name": "KM6SO-10",  "frequency": 145.530, "peer": "KM6SO-10"},
+        {"name": "K7NHV-10",  "frequency": 145.045, "peer": "K7NHV-10"},
+        {"name": "W7VMI-10",  "frequency": 145.070, "peer": "W7VMI-10"},
+        {"name": "KF7ZYF-12", "frequency": 145.560, "peer": "KF7ZYF-12"},
+        {"name": "W7PFB-10",  "frequency": 144.990, "peer": "W7PFB-10"}
+    ]
+}
