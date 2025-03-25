@@ -49,8 +49,8 @@ This should be the path to the pat binary (ex: `/usr/bin/pat`).
 
 If not specified, we simply invoke "pat" and rely on it being contained in the `PATH`.
 
-### mailbox_base_path
-**Path to the pat mailbox**
+### pat_mailbox_path
+**Path to the pat mailbox. Will be passed to pat using --mbox. If you are running more than one monitor, you need to segregate their mailboxes.**
 
 _Type:_ String
 
