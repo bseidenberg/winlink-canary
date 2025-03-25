@@ -38,7 +38,8 @@ def generate_html(node_status, title="Node Status Dashboard"):
             "UNHEALTHY": "unhealthy",
             "PENDING": "pending"
         }.get(node["state"], "pending")
-        last_tested = datetime.fromtimestamp(node['last_healthy']).strftime('%Y-%m-%d %H:%M')
+        last_tested = ('Never' if node['last_healthy'] == 0 else
+                       datetime.fromtimestamp(node['last_healthy']).strftime('%Y-%m-%d %H:%M'))
 
         html += """
             <tr>
