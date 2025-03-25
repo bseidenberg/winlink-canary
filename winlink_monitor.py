@@ -534,7 +534,7 @@ class Handler(BaseHTTPRequestHandler):
         '''Standard GET handler for this class.'''
         if self.path in ("/status.html", "/status"):
             response = generate_html(health_state_dicts(), title='')
-        if self.path =="/status.json":
+        elif self.path == "/status.json":
             response = f'<pre>{json.dumps(canary_status(), indent=4)}</pre>\n'
         elif self.path == "/config.json":
             response = f'<pre>{json.dumps(CONFIG, indent=4)}</pre>\n'
