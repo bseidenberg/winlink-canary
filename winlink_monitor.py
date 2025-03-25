@@ -85,7 +85,7 @@ def load_config(args):
     '''Parse config file and do some config syntax and sanity checking.
        Aborts on detection invalid conifg file.
     '''
-    config_json = json.load(open(args.config, 'r', encoding="utf-8"))
+    config_json = json.load(open(args.config, 'r', encoding='utf-8'))
 
     # Time to wait (seconds) between sending a probe and checking for it.
     # There's then exponential backoff for the retries.
@@ -335,7 +335,7 @@ def check_health(node):
 
     try:
         if CONFIG['radio_lockfile']:
-            lockf = open(CONFIG['radio_lockfile'], "w", encoding="utf-8")
+            lockf = open(CONFIG['radio_lockfile'], 'w', encoding='utf-8')
             fcntl.flock(lockf.fileno(), fcntl.LOCK_EX)
         pending_probe = send_probe(node)
         lockf.close()
