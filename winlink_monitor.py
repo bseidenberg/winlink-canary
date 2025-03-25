@@ -47,6 +47,7 @@ from enum import Enum
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from subprocess import run, CalledProcessError
+from webpage import generate_html
 import Hamlib
 from tait import Tait
 
@@ -84,7 +85,7 @@ def load_config(args):
     '''Parse config file and do some config syntax and sanity checking.
        Aborts on detection invalid conifg file.
     '''
-    config_json = json.load(open(args.config, 'r'))
+    config_json = json.load(open(args.config, 'r', encoding="utf-8"))
 
     # Time to wait (seconds) between sending a probe and checking for it.
     # There's then exponential backoff for the retries.
@@ -334,7 +335,7 @@ def check_health(node):
 
     try:
         if CONFIG['radio_lockfile']:
-            lockf = open(CONFIG['radio_lockfile'], "w")
+            lockf = open(CONFIG['radio_lockfile'], "w", encoding="utf-8")
             fcntl.flock(lockf.fileno(), fcntl.LOCK_EX)
         pending_probe = send_probe(node)
         lockf.close()
@@ -530,16 +531,17 @@ class Handler(BaseHTTPRequestHandler):
     '''Basis for diagnostic web interface'''
 
     def do_GET(self):
-        if self.path == "/status.html":
+        '''Standard GET handler for this class.'''
+        if self.path in ("/status.html", "/status"):
             response = generate_html(health_state_dicts(), title='')
-        if self.path == "/status" or self.path == "/status.json":
+        if self.path =="/status.json":
             response = f'<pre>{json.dumps(canary_status(), indent=4)}</pre>\n'
-        elif self.path == "/config":
+        elif self.path == "/config.json":
             response = f'<pre>{json.dumps(CONFIG, indent=4)}</pre>\n'
         else:
-            response = 'Help:\n/status.html - for current status of nodes as webpage\n' +
-                       '/status.json - for current status of nodes as json\n' +
-                       '/config - for configuration as json\n'
+            response = ('Help:\n/status.html (or just /status) - current status of nodes as webpage\n' +
+                        '/status.json - current status of nodes as json\n' +
+                        '/config.json - configuration as json\n')
         self.send_response(200)
         self.send_header('Content-type', 'text/html')
         self.end_headers()
@@ -572,6 +574,7 @@ def sleep_between_passes():
 # MAIN
 
 def main():
+    '''Main program - after setup, run continuously as a deamon or a fixed number of passes.'''
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--daemon', help='deamon mode (run continuously)', default=False, action='store_true')
     parser.add_argument('-c', '--count', help='number of passes to run', default='10', type=int)

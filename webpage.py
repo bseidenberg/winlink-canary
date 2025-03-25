@@ -4,6 +4,7 @@ Generate a wepage the displays a table with node status.
 from datetime import datetime
 
 def generate_html(node_status, title="Node Status Dashboard"):
+    '''Generate an HTML status page based on an array of status dicts.'''
     html = """<!DOCTYPE html>
     <html lang="en">
     <head>
@@ -59,8 +60,8 @@ def generate_html(node_status, title="Node Status Dashboard"):
 
     return html
 
-# Example usage
-node_status = [
+# Example status array for testing
+sample_node_status = [
     {"name": "NodeA", "frequency": 440.35, "state": "HEALTHY", "last_healthy": 1714060800},
     {"name": "NodeB", "frequency": 430.850, "state": "UNHEALTHY", "last_healthy": 1714064400},
     {"name": "NodeC", "frequency": 439.750, "state": "PENDING", "last_healthy": 1714068000},
@@ -68,8 +69,9 @@ node_status = [
 ]
 
 def main():
-    html_content = generate_html(node_status, '')
-    with open("node_status.html", "w") as f:
+    '''Generate HTML output for testing.'''
+    html_content = generate_html(sample_node_status, '')
+    with open("node_status.html", "w", encoding="utf-8") as f:
         f.write(html_content)
 
 
