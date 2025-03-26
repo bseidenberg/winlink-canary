@@ -535,9 +535,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path in ("/status.html", "/status"):
             response = generate_html(health_state_dicts(), title='')
         elif self.path == "/status.json":
-            response = f'<pre>{json.dumps(canary_status(), indent=4)}</pre>\n'
+            response = f'{json.dumps(canary_status(), indent=4)}\n'
         elif self.path == "/config.json":
-            response = f'<pre>{json.dumps(CONFIG, indent=4)}</pre>\n'
+            response = f'{json.dumps(CONFIG, indent=4)}\n'
         else:
             response = ('Help:\n/status.html (or just /status) - current status of nodes as webpage\n' +
                         '/status.json - current status of nodes as json\n' +
