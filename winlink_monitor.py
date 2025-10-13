@@ -30,6 +30,7 @@
 '''
 
 import argparse
+import fcntl
 import json
 import logging
 import os
@@ -46,6 +47,7 @@ from enum import Enum
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
 from subprocess import run, CalledProcessError
+from webpage import generate_html
 import Hamlib
 from tait import Tait
 
@@ -76,13 +78,14 @@ class Health(Enum):
 
 
 def str2bool(arg):
+    '''Accept a variety of true indcators.'''
     return arg.lower() in ['true', '1', 't', 'y', 'yes']
 
 def load_config(args):
     '''Parse config file and do some config syntax and sanity checking.
        Aborts on detection invalid conifg file.
     '''
-    config_json = json.load(open(args.config, 'r'))
+    config_json = json.load(open(args.config, 'r', encoding='utf-8'))
 
     # Time to wait (seconds) between sending a probe and checking for it.
     # There's then exponential backoff for the retries.
@@ -104,6 +107,9 @@ def load_config(args):
     # Optional processes to run before and/or after each pass
     CONFIG['pre_pass_process'] = config_json.get("pre_pass_process", None)
     CONFIG['post_pass_process'] = config_json.get("post_pass_process", None)
+
+    # Optional lockfile to pause radio activity or interlace with another instance
+    CONFIG['radio_lockfile'] = config_json.get('radio_lockfile', None)
 
     # How long to wait between passes (O(hours) - we don't want to hog the channel)
     if args.next_pass_delay > 0:
@@ -328,8 +334,14 @@ def check_health(node):
         assert_outbox_empty()
 
     try:
+        if CONFIG['radio_lockfile']:
+            lockf = open(CONFIG['radio_lockfile'], 'w', encoding='utf-8')
+            fcntl.flock(lockf.fileno(), fcntl.LOCK_EX)
         pending_probe = send_probe(node)
+        lockf.close()
         assert_outbox_empty()
+    except IOError as e:
+        logging.error(f'Could not acquire lock or write to file {e}')
     except LocalRigError:
         logging.error('Failed to transmit probe to node %s (local error)', node.name)
         # Cleanup non-empty outbox
@@ -340,11 +352,15 @@ def check_health(node):
         # Cleanup non-empty outbox
         clear_outbox()
         return Health.UNHEALTHY
+    finally:
+        if 'lockf' in locals():
+            lockf.close() # Will release lock automatically
 
     return poll_for_probe(pending_probe)
 
 
 def pat_base_args():
+    '''Compose common pat leading arguments.'''
     args = [CONFIG['pat']]
     if 'pat_mailbox_path' in CONFIG:
         args.extend(['--mbox', CONFIG['pat_mailbox_path']])
@@ -353,6 +369,7 @@ def pat_base_args():
     return args
 
 def send_probe(node):
+    '''Compose and send a single probe for one Winlink node.'''
     probe = Probe(secrets.token_urlsafe(10), time.time())
 
     logging.info('Composing %s to %s at %s', probe.id, node.name, probe.timestamp)
@@ -432,6 +449,7 @@ def find_all_ids():
 
 
 def calculate_health_state():
+    '''Update the state of each node in the array.'''
     state = {}
     for (node, history) in PROBE_HISTORY.items():
         # Only look at the last health_window_size entries in history
@@ -454,6 +472,7 @@ def health_state_dicts():
         state = {}
         state['name'] = node.name
         state['peer'] = node.peer
+        state['frequency'] = node.frequency
         state['state'] = HEALTH_STATE[node]
         state['history'] = history_string(history) # return full history
         state['last_healthy'] = int(LAST_HEALTHY[node])
@@ -512,12 +531,17 @@ class Handler(BaseHTTPRequestHandler):
     '''Basis for diagnostic web interface'''
 
     def do_GET(self):
-        if self.path == "/status":
-            response = f'<pre>{json.dumps(canary_status(), indent=4)}</pre>\n'
-        elif self.path == "/config":
-            response = f'<pre>{json.dumps(CONFIG, indent=4)}</pre>\n'
+        '''Standard GET handler for this class.'''
+        if self.path in ("/status.html", "/status"):
+            response = generate_html(health_state_dicts(), title='')
+        elif self.path == "/status.json":
+            response = f'{json.dumps(canary_status(), indent=4)}\n'
+        elif self.path == "/config.json":
+            response = f'{json.dumps(CONFIG, indent=4)}\n'
         else:
-            response = 'Help:\n/status - for current status of nodes\n/config - for configuration\n'
+            response = ('Help:\n/status.html (or just /status) - current status of nodes as webpage\n' +
+                        '/status.json - current status of nodes as json\n' +
+                        '/config.json - configuration as json\n')
         self.send_response(200)
         self.send_header('Content-type', 'text/html')
         self.end_headers()
@@ -550,6 +574,7 @@ def sleep_between_passes():
 # MAIN
 
 def main():
+    '''Main program - after setup, run continuously as a deamon or a fixed number of passes.'''
     parser = argparse.ArgumentParser()
     parser.add_argument('-d', '--daemon', help='deamon mode (run continuously)', default=False, action='store_true')
     parser.add_argument('-c', '--count', help='number of passes to run', default='10', type=int)
