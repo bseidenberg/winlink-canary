@@ -1,0 +1,27 @@
+[Unit]
+Description=Winlink Canary Polling Service
+After=network-online.target
+Wants=network-online.target
+# Ensure this starts after the system reaches multi-user mode
+Before=multi-user.target
+
+[Service]
+Type=simple
+User=monitoring
+Group=monitoring
+WorkingDirectory=/home/monitoring/winlink-summary
+ExecStart=/usr/bin/python3 winlink-summary.py \
+    -u http://winlink-canary.msv.hamwan.net:8080/status.json http://winlink-canary.msv.hamwan.net:8081/status.json \
+    -o /var/www/monitoring.seaeoc.hamwan.net/winlink-gateway-status.html \
+    -i 300
+Restart=always
+RestartSec=10
+
+# Security hardening suggestions
+#NoNewPrivileges=true
+#ProtectSystem=full
+#ProtectHome=true
+#PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
