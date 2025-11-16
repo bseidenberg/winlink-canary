@@ -48,10 +48,6 @@ from tait import Tait
 Node = namedtuple("Node", ["name", "frequency", "peer"])
 Probe = namedtuple("Probe", ["id", "timestamp"])
 
-# Set the EXPERIMENTAL pat option for aux callsign only
-env = os.environ.copy()
-env['FW_AUX_ONLY_EXPERIMENT']="1"
-
 CONFIG = {}
 STATUS = { 'mode': 'starting' }
 
@@ -299,14 +295,14 @@ def send_probe(node):
 
     logging.info('Composing %s to %s at %s', probe.id, node.name, probe.timestamp)
     body = f"Canary message sent to {node.name} on {node.frequency} at {probe.timestamp}".encode()
-    run([CONFIG['pat'], 'compose', '-s', probe.id, CONFIG['rx_aux_callsign'], '-r', CONFIG['sender']], input=body, env=env, check=True)
+    run([CONFIG['pat'], 'compose', '-s', probe.id, CONFIG['rx_aux_callsign'], '-r', CONFIG['sender']], input=body, check=True)
     logging.info('Composed. Changing frequency to %s.', node.frequency)
     # Change frequency - we open and close the RIG handle to avoid fighting with VARA on the serial port
     # if it's being used for PTT (ex: IC-705). Doesn't matter for a DRA/Signalink.
     RIG.open()
     RIG.set_freq(Hamlib.RIG_VFO_CURR, int(node.frequency * 1e6))
     RIG.close()
-    run([CONFIG['pat'], '-s', 'connect', f'varafm:///{node.peer}'], env=env, check=True)
+    run([CONFIG['pat'], '-s', 'connect', f'varafm:///{node.peer}'], check=True)
 
     logging.info('Sent!')
 
@@ -344,7 +340,7 @@ def fetch_all():
 
 def download_mail_via_telnet():
     '''Run pat over telnet to download all of our pending messages'''
-    run([CONFIG['pat'], 'connect', 'telnet'], env=env, check=True)
+    run([CONFIG['pat'], 'connect', 'telnet'], check=True)
 
 def find_all_ids():
     '''Find all ids in inbox.
