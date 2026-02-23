@@ -2,23 +2,31 @@
     "sender": "ACS-WL",
     "pat_call": "W7ACS-1",
     "pat_config": "/home/winlink/.config/pat/config-uhf.json",
-    "rx_aux_call": "ACS-WLCPWT",
+    "pat_mailbox_path": "/home/winlink/.local/share/pat/uhftest",
+    "radio_lockfile": "/home/winlink/winlink-canary/radio_lockfile",
+    "rx_aux_call": "SEAACS-UHFTEST",
     "rig_port": "/dev/ttyUSB_TAIT_UHF",
     "rig_port_speed": "9600",
     "rig_model": "TAIT",
     "pre_pass_process": "/home/winlink/bin/start-varafm1",
     "syslog_enabled": "True",
     "dedicated_mailbox": "True",
+    "http_address": "0.0.0.0",
+    "http_port": "8080",
+    "use_https": "False",
+    "https_cert_file": "/etc/letsencrypt/live/winlink-canary.msv.hamwan.net/fullchain.pem",
+    "https_key_file": "/etc/letsencrypt/live/winlink-canary.msv.hamwan.net/privkey.pem",
+    "next_pass_delay": "7200",
     "nodes": [
-        {"name": "Beacon Hill #1",  "frequency": 430.800, "peer": "W7ACS-10"},
-        {"name": "Beacon Hill #2",  "frequency": 439.800, "peer": "W7ACS-11"},
-        {"name": "First Hill #1",   "frequency": 430.850, "peer": "W7ACS-12"},
-        {"name": "First Hill #2",   "frequency": 440.850, "peer": "W7ACS-13"},
-        {"name": "Capitol Park #1", "frequency": 430.950, "peer": "W7ACS-14"},
-        {"name": "Capitol Park #2", "frequency": 439.950, "peer": "W7ACS-15"},
-        {"name": "Magnolia", "frequency": 430.875, "peer":"W7ACS-9"}
+        {"name": "W7ACS-8, Broadview (NW)",   "frequency": 439.975, "peer":"W7ACS-8"},
+        {"name": "W7ACS-9, Magnolia",         "frequency": 430.875, "peer":"W7ACS-9"},
+        {"name": "W7ACS-10, Beacon Hill #1",  "frequency": 430.800, "peer": "W7ACS-10"},
+        {"name": "W7ACS-11, Beacon Hill #2",  "frequency": 439.800, "peer": "W7ACS-11"},
+        {"name": "W7ACS-12, First Hill #1",   "frequency": 430.850, "peer": "W7ACS-12"},
+        {"name": "W7ACS-13, First Hill #2",   "frequency": 440.850, "peer": "W7ACS-13"},
+        {"name": "W7ACS-14, Capitol Park #1", "frequency": 430.950, "peer": "W7ACS-14"},
+        {"name": "W7ACS-15, Capitol Park #2", "frequency": 439.950, "peer": "W7ACS-15"}
     ],
     "DISABLED_NODES_97.201_b": [
-        {"name": "Northwest","frequency": 431.000, "peer":"W7ACS-8"}
     ]
 }

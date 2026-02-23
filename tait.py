@@ -306,5 +306,5 @@ class Tait():
         total = 0
         for c in cmd:
             total += ord(c)
-        checksum = numpy.uint8(total)
+        checksum = numpy.uint8(total%256)
         return format(~checksum+1, '02X')
