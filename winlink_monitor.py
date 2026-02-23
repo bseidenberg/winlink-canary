@@ -336,11 +336,8 @@ def check_health(node):
         pending_probe = send_probe(node)
         lockf.close()
         assert_outbox_empty()
-<<<<<<< HEAD
-=======
     except IOError as e:
         logging.error(f'Could not acquire lock or write to file {e}')
->>>>>>> 7f64c7c (Numerous changes made to the production system that need to go back to origin.)
     except LocalRigError:
         logging.error('Failed to transmit probe to node %s (local error)', node.name)
         # Cleanup non-empty outbox
@@ -351,21 +348,15 @@ def check_health(node):
         # Cleanup non-empty outbox
         clear_outbox()
         return Health.UNHEALTHY
-<<<<<<< HEAD
-=======
     finally:
         if 'lockf' in locals():
             lockf.close() # Will release lock automatically
->>>>>>> 7f64c7c (Numerous changes made to the production system that need to go back to origin.)
 
     return poll_for_probe(pending_probe)
 
 
 def pat_base_args():
-<<<<<<< HEAD
-=======
     '''Compose common pat leading arguments.'''
->>>>>>> 7f64c7c (Numerous changes made to the production system that need to go back to origin.)
     args = [CONFIG['pat']]
     if 'pat_mailbox_path' in CONFIG:
         args.extend(['--mbox', CONFIG['pat_mailbox_path']])
@@ -374,10 +365,7 @@ def pat_base_args():
     return args
 
 def send_probe(node):
-<<<<<<< HEAD
-=======
     '''Compose and send a single probe for one Winlink node.'''
->>>>>>> 7f64c7c (Numerous changes made to the production system that need to go back to origin.)
     probe = Probe(secrets.token_urlsafe(10), time.time())
 
     logging.info('Composing %s to %s at %s', probe.id, node.name, probe.timestamp)
@@ -385,11 +373,7 @@ def send_probe(node):
     args = pat_base_args()
     args.extend(['compose', '-s', probe.id, CONFIG['rx_aux_callsign'], '-r', CONFIG['sender']])
     print(f'args is {args}')
-<<<<<<< HEAD
-    run(args, input=body, env=env, check=True)
-=======
     run(args, input=body, check=True)
->>>>>>> 7f64c7c (Numerous changes made to the production system that need to go back to origin.)
     logging.info('Composed. Changing frequency to %s.', node.frequency)
 
     # Change frequency - we open and close the RIG handle to avoid fighting with VARA
@@ -404,11 +388,7 @@ def send_probe(node):
 
     args = pat_base_args()
     args.extend(['--send-only', 'connect', f'varafm:///{node.peer}'])
-<<<<<<< HEAD
-    run(args, env=env, check=True)
-=======
     run(args, check=True)
->>>>>>> 7f64c7c (Numerous changes made to the production system that need to go back to origin.)
 
     logging.info('Sent!')
     return probe
@@ -450,11 +430,7 @@ def download_mail_via_telnet():
     '''Run pat over telnet to download all of our pending messages'''
     args = pat_base_args()
     args.extend(['connect', 'telnet'])
-<<<<<<< HEAD
-    run(args, env=env, check=True)
-=======
     run(args, check=True)
->>>>>>> 7f64c7c (Numerous changes made to the production system that need to go back to origin.)
 
 def find_all_ids():
     '''Find all ids in inbox.
@@ -551,18 +527,12 @@ class Handler(BaseHTTPRequestHandler):
     '''Basis for diagnostic web interface'''
 
     def do_GET(self):
-<<<<<<< HEAD
-        if self.path == "/status":
-            response = f'<pre>{json.dumps(canary_status(), indent=4)}</pre>\n'
-        elif self.path == "/config":
-=======
         '''Standard GET handler for this class.'''
         if self.path in ("/status.html", "/status"):
             response = generate_html(health_state_dicts(), title='')
         elif self.path == "/status.json":
             response = f'<pre>{json.dumps(canary_status(), indent=4)}</pre>\n'
         elif self.path == "/config.json":
->>>>>>> 7f64c7c (Numerous changes made to the production system that need to go back to origin.)
             response = f'<pre>{json.dumps(CONFIG, indent=4)}</pre>\n'
         else:
             response = ('Help:\n/status.html (or just /status) - current status of nodes as webpage\n' +
